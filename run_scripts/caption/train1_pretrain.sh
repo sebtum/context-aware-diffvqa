@@ -1,21 +1,23 @@
 
 export MASTER_PORT=1061
 
-
-log_dir=./logs/reportgen/pretrain
-save_dir=/data/yjcho/PLURAL/checkpoints/pretrain
+ws=/home/guests/sebastian_sotela
+plural=${ws}/PLURAL
+log_dir=${ws}/logs/reportgen/pretrain
+checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
+save_dir=${checkpoints}/pretrain
 mkdir -p $log_dir $save_dir
 
-bpe_dir=../../utils/BPE
-user_dir=../../ofa_module
+bpe_dir=${plural}/utils/BPE
+user_dir=${plural}/ofa_module
 
-data_dir=/data/yjcho/PLURAL/data
+data_dir=${plural}/data
 
 # Put the larger volume of data in 'data' and the smaller volume of data in 'diff_data'.
-data=${data_dir}/mimic_diff_all_train.tsv,${data_dir}/mimic_diff_all_valid.tsv
-diff_data=${data_dir}/mimic_uni_all_train.tsv,${data_dir}/mimic_uni_all_valid.tsv
+data=${data_dir}/mimic_findings_train_20241112_192009.pkl,${data_dir}/mimic_findings_valid_20241112_192009.pkl
+#diff_data=${data_dir}/mimic_uni_all_train.tsv,${data_dir}/mimic_uni_all_valid.tsv
 
-restore_file=/data/taehee/OFA/checkpoints/ofa_base.pt
+restore_file=${checkpoints}/ofa_base.pt
 selected_cols=0,1,2,3,4,5,6,7
 task=caption
 arch=ofa_base
@@ -30,6 +32,8 @@ resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
 decoder_drop_path_rate=0.1
 dropout=0.1
+weight_decay=0.01
+
 attention_dropout=0.0
 max_src_length=100
 max_tgt_length=100
@@ -37,7 +41,7 @@ num_bins=1000
 patch_image_size=384
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
 drop_worst_ratio=0.2
-
+# FIXME: Check CUDA availability, master port
 for max_epoch in 100; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in 0.06; do
@@ -48,7 +52,7 @@ for max_epoch in 100; do
       log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}".log"
       save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}
       mkdir -p $save_path
-      CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ${plural}/train.py \
           $data \
           --diff-data=${diff_data} \
           --selected-cols=${selected_cols} \
@@ -75,7 +79,8 @@ for max_epoch in 100; do
           --decoder-drop-path-rate=${decoder_drop_path_rate} \
           --dropout=${dropout} \
           --attention-dropout=${attention_dropout} \
-          --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
+          --weight-decay=${weight_decay} \
+          --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
           --lr-scheduler=polynomial_decay --lr=${lr} \
           --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
           --log-format=simple --log-interval=10 \

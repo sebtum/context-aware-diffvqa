@@ -1,19 +1,23 @@
 
 export MASTER_PORT=1061
 
-
-log_dir=./logs/reportgen/finetune
-save_dir=/data/yjcho/PLURAL/checkpoints/finetune
+ws=/home/guests/sebastian_sotela
+plural=${ws}/PLURAL
+log_dir=${ws}/logs/reportgen/finetune
+checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
+save_dir=${checkpoints}/finetune
 mkdir -p $log_dir $save_dir
 
-bpe_dir=../../utils/BPE
-user_dir=../../ofa_module
+bpe_dir=${plural}/utils/BPE
+user_dir=${plural}/ofa_module
 
-data_dir=/data/yjcho/PLURAL/data/
-data=${data_dir}/mimic_diff_vqa_train.tsv,${data_dir}/mimic_diff_vqa_valid.tsv
+data_dir=${plural}/data
+#data=${data_dir}/mimic_diff_vqa_train.tsv,${data_dir}/mimic_diff_vqa_valid.tsv
+data=${data_dir}/mimic_qa_train_2024_11_13_23:37:15.pkl,${data_dir}/mimic_qa_valid_2024_11_13_23:37:15.pkl
 
 
-restore_file=/data/PLURAL/reportgen/pretrain/100_0.06_200000/checkpoint_best.pt
+#restore_file=/data/PLURAL/reportgen/pretrain/100_0.06_200000/checkpoint_best.pt
+restore_file=${checkpoint}/PLURAL.pt #FIXME
 selected_cols=0,1,2,3,4,5,6,7
 task=caption
 arch=ofa_base
@@ -46,7 +50,7 @@ for max_epoch in 100; do
       log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}".log"
       save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}
       mkdir -p $save_path
-      CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ${plural}/train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
