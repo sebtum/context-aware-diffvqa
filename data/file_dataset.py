@@ -53,8 +53,11 @@ class FileDataset:
             fp = open(self.file_path, "r")
             print("local datafile {} slice_id {} begin to initialize row_count and line_idx-to-offset mapping".format(
                 self.file_path, self.slice_id))
+            # Skip the header row
+            fp.readline()
+            # Initialize row count and offsets
+            offset = fp.tell()  # Start tracking after the header
             self.total_row_count = 0
-            offset = 0
             self.lineid_to_offset = []
             for line in fp:
                 self.lineid_to_offset.append(offset)

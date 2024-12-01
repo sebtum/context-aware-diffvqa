@@ -4,6 +4,7 @@ export MASTER_PORT=1061
 ws=/home/guests/sebastian_sotela
 plural=${ws}/PLURAL
 log_dir=${ws}/logs/reportgen/pretrain
+tensorboard_logdir=${log_dir}/$(date +"%Y-%m-%d_%H-%M-%S")_tensorboard
 checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
 save_dir=${checkpoints}/pretrain
 mkdir -p $log_dir $save_dir
@@ -14,7 +15,8 @@ user_dir=${plural}/ofa_module
 data_dir=${ws}/data_pre_runs/tsv_output_data
 
 # Put the larger volume of data in 'data' and the smaller volume of data in 'diff_data'.
-data=${data_dir}/2_samples/mimic_impressions_train_2024_11_22_13:01:12.tsv,${data_dir}/2_samples/mimic_impressions_valid_2024_11_22_13:01:12.tsv
+# data=${data_dir}/2_samples/mimic_impressions_train_2024_11_22_13:01:12.tsv,${data_dir}/2_samples/mimic_impressions_valid_2024_11_22_13:01:12.tsv
+data=${data_dir}/2_samples/mimic_findings_train_2024_11_22_13:01:12.tsv,${data_dir}/2_samples/mimic_findings_valid_2024_11_22_13:01:12.tsv
 #data=${data_dir}/mimic_findings_train_20241112_192009.pkl,${data_dir}/mimic_findings_valid_20241112_192009.pkl
 #diff_data=${data_dir}/mimic_uni_all_train.tsv,${data_dir}/mimic_uni_all_valid.tsv
 
@@ -25,8 +27,8 @@ arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0
 lr=1e-3
-max_epoch=5 #500
-warmup_ratio=0.06
+max_epoch=10 #500
+warmup_ratio=0 #0.06
 batch_size=1
 update_freq=1
 resnet_drop_path_rate=0
@@ -43,9 +45,10 @@ patch_image_size=384
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
 drop_worst_ratio=0
 drop_worst_after=0
+clip_norm=1000
 
 
-log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}".log"
+log_file=${log_dir}/$(date +"%Y-%m-%d_%H-%M-%S")_${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}".log"
 save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}
 mkdir -p $save_path
 python3 ${plural}/train.py \
@@ -75,10 +78,13 @@ python3 ${plural}/train.py \
     --dropout=${dropout} \
     --attention-dropout=${attention_dropout} \
     --weight-decay=${weight_decay} \
-    --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
+    --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08\
+    --clip-norm=${clip_norm} \
     --lr=${lr} \
     --max-epoch=${max_epoch} \
-    --log-format=simple --log-interval=10 \
+    --tensorboard-logdir=${tensorboard_logdir} \
+    --log-format=simple \
+    --log-interval=10 \
     --fixed-validation-seed=7 \
     --no-epoch-checkpoints --keep-best-checkpoints=1 \
     --save-interval=1 \
