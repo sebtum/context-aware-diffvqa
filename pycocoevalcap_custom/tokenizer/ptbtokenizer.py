@@ -13,6 +13,8 @@ import sys
 import subprocess
 import tempfile
 import itertools
+import nltk
+from nltk.tokenize import word_tokenize
 
 # path to the stanford corenlp jar
 STANFORD_CORENLP_3_4_1_JAR = 'stanford-corenlp-3.4.1.jar'
@@ -71,5 +73,28 @@ class PTBTokenizer:
             tokenized_caption = ' '.join([w for w in line.rstrip().split(' ') \
                     if w not in PUNCTUATIONS])
             final_tokenized_captions_for_image[k].append(tokenized_caption)
+
+        return final_tokenized_captions_for_image
+
+class NLTKTokenizer:
+    """Python-based tokenizer using NLTK"""
+    def __init__(self, verbose=True):
+        self.verbose = verbose
+        nltk.download('punkt', quiet=not verbose)  # Download tokenizer data if not available
+
+    def tokenize(self, captions_for_image):
+        final_tokenized_captions_for_image = {}
+
+        # Iterate over each image and its captions
+        for image_id, captions in captions_for_image.items():
+            tokenized_captions = []
+            for caption in captions:
+                # Lowercase the caption and tokenize it
+                tokens = word_tokenize(caption['caption'].lower())
+                # Remove punctuations
+                tokens = [token for token in tokens if token not in PUNCTUATIONS]
+                # Join tokens back into a string and append to results
+                tokenized_captions.append(' '.join(tokens))
+            final_tokenized_captions_for_image[image_id] = tokenized_captions
 
         return final_tokenized_captions_for_image

@@ -1,7 +1,7 @@
 __author__ = 'tylin'
-from .tokenizer.ptbtokenizer import PTBTokenizer
+from .tokenizer.ptbtokenizer import PTBTokenizer,NLTKTokenizer
 from .bleu.bleu import Bleu
-from .meteor.meteor import Meteor
+from .meteor.meteor import Meteor,MeteorHF
 from .rouge.rouge import Rouge
 from .cider.cider import Cider
 from .spice.spice import Spice
@@ -29,7 +29,10 @@ class COCOEvalCap:
         # Set up scorers
         # =================================================
         print('tokenization...')
-        tokenizer = PTBTokenizer()
+        # FIXME using nltk for running on IFL slurm which
+        # has no java
+        # tokenizer = PTBTokenizer()
+        tokenizer = NLTKTokenizer()
         gts  = tokenizer.tokenize(gts)
         res = tokenizer.tokenize(res)
 
@@ -39,7 +42,10 @@ class COCOEvalCap:
         print('setting up scorers...')
         scorers = [
             (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
-            (Meteor(),"METEOR"),
+            # FIXME: Using hugging face implementation since java
+            # is not available in ifl cluster
+            # (Meteor(),"METEOR"),
+            (MeteorHF(),"METEOR"),
             (Rouge(), "ROUGE_L"),
             (Cider(), "CIDEr"),
             #(Spice(), "SPICE")

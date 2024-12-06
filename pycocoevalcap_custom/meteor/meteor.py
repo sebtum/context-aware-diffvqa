@@ -12,6 +12,8 @@ import threading
 METEOR_JAR = 'meteor-1.5.jar'
 # print METEOR_JAR
 
+import evaluate
+
 class Meteor:
 
     def __init__(self):
@@ -80,3 +82,45 @@ class Meteor:
         self.meteor_p.kill()
         self.meteor_p.wait()
         self.lock.release()
+
+class MeteorHF:
+    """Python wrapper for Hugging Face's METEOR metric."""
+
+    def __init__(self):
+        # Load Hugging Face's METEOR metric
+        self.meteor = evaluate.load("meteor")
+        self.lock = threading.Lock()  # Ensure thread safety
+
+    def compute_score(self, gts, res):
+        """
+        Compute the METEOR score for the given predictions and references.
+
+        Args:
+            gts (dict): Ground truth captions (keys are image IDs, values are lists of reference captions).
+            res (dict): Predicted captions (keys are image IDs, values are lists containing a single hypothesis).
+
+        Returns:
+            float: The overall METEOR score.
+            list: Individual scores for each image.
+        """
+        assert gts.keys() == res.keys(), "Mismatch between ground truth and predictions keys."
+
+        # Prepare inputs for Hugging Face's evaluate
+        references = [gts[img_id] for img_id in gts.keys()]
+        predictions = [res[img_id][0] for img_id in res.keys()]
+
+        # Ensure thread safety during scoring
+        with self.lock:
+            results = self.meteor.compute(predictions=predictions, references=references)
+
+        # Overall METEOR score
+        score = results["meteor"]
+
+        # Since METEOR does not return per-example scores by default, mimic the structure
+        scores = [score] * len(predictions)
+
+        return score, scores
+
+    def method(self):
+        """Return the name of the metric."""
+        return "METEOR"

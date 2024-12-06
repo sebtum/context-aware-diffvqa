@@ -17,42 +17,6 @@ from pycocotools.coco import COCO
 import os
 import re
 
-
-
-test_data = '/data/yjcho/PLURAL/data/mimic_diff_vqa_test.tsv'
-model_path = '/data/yjcho/PLURAL/checkpoints/stage3_finetune.pt'
-
-
-name = test_data.split('/')[-1][:-4]+'_'+model_path.split('/')[-3]+'_'+model_path.split('/')[-1][:-3]
-print(name)
-
-annotation_file = f'gts_{name}.json'
-results_file = f'res_{name}.json'
-
-# =====================================================================================
-
-fp = open(f'{test_data}', "r")
-input_args = ["", "--task=refcoco", "--beam=10", f"--path={model_path}", "--bpe-dir=utils/BPE", "--no-repeat-ngram-size=3", "--patch-image-size=384"]
-
-fp.seek(0)
-images = []
-prev_images = []
-gts = []
-questions = []
-dataset = []
-fp.seek(0)
-while(True):
-    column_l = fp.readline().rstrip("\n").split("\t")
-    if len(column_l) == 1: break
-    images.append(column_l[1])
-    gts.append(column_l[2])
-    questions.append(column_l[3])
-    dataset.append(column_l[6])
-    prev_images.append(column_l[4])
-    
-print(len(prev_images))
-
-
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -62,6 +26,51 @@ from tasks.mm_tasks.refcoco import RefcocoTask
 
 from models.ofa import OFAModel
 from PIL import Image, ImageOps
+
+from datetime import datetime
+
+start_time = datetime.now()
+
+#test_data = '/data/yjcho/PLURAL/data/mimic_diff_vqa_test.tsv'
+#model_path = '/data/yjcho/PLURAL/checkpoints/stage3_finetune.pt'
+ws = '/home/guests/sebastian_sotela'
+inference_path = f'{ws}/logs/reportgen/inference'
+checkpoints= f'/home/polyaxon-data/data1/mimic/PLURAL/checkpoints'
+#test_data = f'{ws}/data_pre_runs/tsv_output_data/2_samples/mimic_diff_qa_test_2024_11_22_13:01:12.tsv'
+test_data = f'{ws}/data_pre_runs/tsv_output_data/mimic_diff_qa_s2_test.tsv'
+model_path = f'{checkpoints}/PLURAL.pt'
+
+
+name = test_data.split('/')[-1][:-4]+'_'+model_path.split('/')[-1][:-3]
+print(name)
+
+annotation_file = f'gts_{name}.json'
+results_file = f'res_{name}.json'
+
+# =====================================================================================
+
+fp = open(f'{test_data}', "r")
+input_args = ["", "--task=refcoco", "--beam=10", f"--path={model_path}", f"--bpe-dir={ws}/PLURAL/utils/BPE", "--no-repeat-ngram-size=3", "--patch-image-size=384"]
+
+fp.seek(0)
+images = []
+prev_images = []
+gts = []
+questions = []
+dataset = []
+fp.seek(0)
+fp.readline()
+while(True):
+#for i in range(10000):
+    column_l = fp.readline().rstrip("\n").split("\t")
+    if len(column_l) == 1: break
+    images.append(column_l[1])
+    gts.append(column_l[2])
+    questions.append(column_l[3])
+    dataset.append(column_l[6])
+    prev_images.append(column_l[4])
+    
+print(len(prev_images))
 
 tasks.register_task('refcoco', RefcocoTask)
 
@@ -276,7 +285,7 @@ for kk in range(len(images)):
         with torch.no_grad():
             hypos = task.inference_step(generator, models, sample)
             tokens, bins, imgs = decode_fn(hypos[0][0]["tokens"], task.tgt_dict, task.bpe, generator)
-        print('{0} / {1}'.format(kk, len(images)), end = '\r')
+        #print('{0} / {1}'.format(kk, len(images)), end = '\r')
         infer_res["res"].append(tokens)
         infer_res['gts'].append(gt)
     else:
@@ -299,7 +308,7 @@ for kk in range(len(images)):
         with torch.no_grad():
             hypos = task.inference_step(generator, models, sample)
             tokens, bins, imgs = decode_fn(hypos[0][0]["tokens"], task.tgt_dict, task.bpe, generator)
-        print('{0} / {1}'.format(kk, len(images)), end = '\r')
+        #print('{0} / {1}'.format(kk, len(images)), end = '\r')
         infer_res["res"].append(tokens)
         infer_res['gts'].append(gt)
  
@@ -307,8 +316,8 @@ for kk in range(len(images)):
     #print(gt)
     #print(tokens)
 
-
-# print(f"{end - start:.5f} sec")
+end = time.time()
+print(f"{end - start:.5f} sec")
 print('res len:',len(infer_res['res']))
 print('gts len:',len(infer_res['gts']))
 res = []
@@ -324,15 +333,15 @@ for i , cap in enumerate(zip(infer_res['res'], infer_res['gts'])):
 gts = {'images':gts_img, 'annotations':gts_ann}    
   
 
-json.dump(res,open(f'./eval_results/{results_file}','w'))
-json.dump(gts,open(f'./eval_results/{annotation_file}','w'))
+json.dump(res,open(f'{inference_path}/{results_file}','w'))
+json.dump(gts,open(f'{inference_path}/{annotation_file}','w'))
 print('json file save!')
 time.sleep(10)
 
 
 # create coco object and coco_result object
-coco = COCO(f'./eval_results/{annotation_file}')
-coco_result = coco.loadRes(f'./eval_results/{results_file}')
+coco = COCO(f'{inference_path}/{annotation_file}')
+coco_result = coco.loadRes(f'{inference_path}/{results_file}')
 
 # create coco_eval object by taking coco and coco_result
 coco_eval = COCOEvalCap(coco, coco_result)
@@ -353,3 +362,7 @@ for metric, score in coco_eval.eval.items():
     
     print(f'{metric}: {score:.3f}')
 print(name)
+end_time = datetime.now()
+
+execution_time = end_time - start_time
+print(f"Execution Time: {execution_time}")
