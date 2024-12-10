@@ -7,6 +7,7 @@ import os
 import sys
 import subprocess
 import threading
+from multiprocessing import Lock
 
 # Assumes meteor-1.5.jar is in the same directory as meteor.py.  Change as needed.
 METEOR_JAR = 'meteor-1.5.jar'
@@ -89,7 +90,7 @@ class MeteorHF:
     def __init__(self):
         # Load Hugging Face's METEOR metric
         self.meteor = evaluate.load("meteor")
-        self.lock = threading.Lock()  # Ensure thread safety
+        #self.lock = Lock()  # Ensure thread safety
 
     def compute_score(self, gts, res):
         """
@@ -110,8 +111,8 @@ class MeteorHF:
         predictions = [res[img_id][0] for img_id in res.keys()]
 
         # Ensure thread safety during scoring
-        with self.lock:
-            results = self.meteor.compute(predictions=predictions, references=references)
+        #with self.lock:
+        results = self.meteor.compute(predictions=predictions, references=references)
 
         # Overall METEOR score
         score = results["meteor"]

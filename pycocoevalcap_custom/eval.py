@@ -5,6 +5,8 @@ from .meteor.meteor import Meteor,MeteorHF
 from .rouge.rouge import Rouge
 from .cider.cider import Cider
 from .spice.spice import Spice
+import logging
+import nltk
 
 
 class COCOEvalCap:
@@ -15,7 +17,14 @@ class COCOEvalCap:
         self.coco = coco
         self.cocoRes = cocoRes
         self.params = {'image_id': coco.getImgIds()}
-
+        self.logger = logging.getLogger(__name__)
+        #self.logger.info("Download NLTK packages")
+        self.logger.info("Append NLTK packages path")
+        #nltk.download('punkt', quiet=True)
+        #nltk.download('wordnet', quiet=True)
+        #nltk.download('omw-1.4', quiet=True)
+        nltk.data.path.append('/home/guests/sebastian_sotela/nltk_data')
+    
     def evaluate(self):
         imgIds = self.params['image_id']
         # imgIds = self.coco.getImgIds()
@@ -28,18 +37,19 @@ class COCOEvalCap:
         # =================================================
         # Set up scorers
         # =================================================
-        print('tokenization...')
+        self.logger.info('Setting up NLTK Tokenizer...')
         # FIXME using nltk for running on IFL slurm which
         # has no java
         # tokenizer = PTBTokenizer()
         tokenizer = NLTKTokenizer()
+        self.logger.info("Tokenizing for evaluation...")
         gts  = tokenizer.tokenize(gts)
         res = tokenizer.tokenize(res)
 
         # =================================================
         # Set up scorers
         # =================================================
-        print('setting up scorers...')
+        self.logger.info("Setting up scorers...")
         scorers = [
             (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
             # FIXME: Using hugging face implementation since java
@@ -54,18 +64,23 @@ class COCOEvalCap:
         # =================================================
         # Compute scores
         # =================================================
+      
         for scorer, method in scorers:
-            print('computing %s score...'%(scorer.method()))
-            score, scores = scorer.compute_score(gts, res)
-            if type(method) == list:
+            self.logger.info(f"Computing Score for method {method}...")
+            try:
+                score, scores = scorer.compute_score(gts, res)
+            except Exception as e:
+                self.logger.error(f"Problem scoring with method {method}: {e}")
+
+            if isinstance(method, list):
                 for sc, scs, m in zip(score, scores, method):
                     self.setEval(sc, m)
                     self.setImgToEvalImgs(scs, gts.keys(), m)
-                    print("%s: %0.3f"%(m, sc))
+                    self.logger.info(f"{m}: {sc:.3f}")
             else:
                 self.setEval(score, method)
                 self.setImgToEvalImgs(scores, gts.keys(), method)
-                print("%s: %0.3f"%(method, score))
+                self.logger.info(f"{method}: {score:.3f}")
         self.setEvalImgs()
 
     def setEval(self, score, method):

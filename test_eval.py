@@ -1,4 +1,3 @@
-import cv2
 import numpy
 from matplotlib import pyplot as plt
 import glob
@@ -36,13 +35,13 @@ start_time = datetime.now()
 ws = '/home/guests/sebastian_sotela'
 inference_path = f'{ws}/logs/reportgen/inference'
 checkpoints= f'/home/polyaxon-data/data1/mimic/PLURAL/checkpoints'
-#test_data = f'{ws}/data_pre_runs/tsv_output_data/2_samples/mimic_diff_qa_test_2024_11_22_13:01:12.tsv'
-test_data = f'{ws}/data_pre_runs/tsv_output_data/mimic_diff_qa_s2_test.tsv'
+test_data = f'{ws}/data_pre_runs/tsv_output_data/2_samples/mimic_diff_qa_s2_test.tsv'
+#test_data = f'{ws}/data_pre_runs/tsv_output_data/mimic_diff_qa_s2_test.tsv'
 model_path = f'{checkpoints}/PLURAL.pt'
 
 
 name = test_data.split('/')[-1][:-4]+'_'+model_path.split('/')[-1][:-3]
-print(name)
+
 
 annotation_file = f'gts_{name}.json'
 results_file = f'res_{name}.json'
@@ -120,17 +119,24 @@ patch_resize_transform = transforms.Compose([
 bos_item = torch.LongTensor([task.src_dict.bos()])
 eos_item = torch.LongTensor([task.src_dict.eos()])
 pad_idx = task.src_dict.pad()
+print(f"bos: {bos_item}, eos:{eos_item}, pad:{pad_idx}")
 
 
 def get_symbols_to_strip_from_output(generator):
     if hasattr(generator, "symbols_to_strip_from_output"):
-        return generator.symbols_to_strip_from_output
+        sym2strip = generator.symbols_to_strip_from_output
+        print(f"sym 2 strip option 1: {sym2strip}")
+        return sym2strip
     else:
-        return {generator.bos, generator.eos}
+        sym2strip = {generator.bos, generator.eos}
+        print(f"sym 2 strip option 2: {sym2strip}")
+        return sym2strip
 
 
 def decode_fn(x, tgt_dict, bpe, generator, tokenizer=None):
+    print(f"string to decode {x}")
     x = tgt_dict.string(x.int().cpu(), extra_symbols_to_ignore=get_symbols_to_strip_from_output(generator))
+    print(f"decodeded string: {x}")
     token_result = []
     bin_result = []
     img_result = []
@@ -148,7 +154,7 @@ def decode_fn(x, tgt_dict, bpe, generator, tokenizer=None):
                 token_result.append(token.strip())
             else:
                 token_result[-1] += token
-
+    print(f"classified decoding:{token_result}{bin_result}{img_result}")
     return ' '.join(token_result), ' '.join(bin_result), ' '.join(img_result)
 
 
@@ -179,6 +185,7 @@ def encode_text(text, length=None, append_bos=False, append_eos=False):
       for word in text.strip().split()
     ]
     line = ' '.join(line)
+    print(f"line after bpe: {line}")
     s = task.tgt_dict.encode_line(
         line=line,
         add_if_not_exist=False,
@@ -190,6 +197,7 @@ def encode_text(text, length=None, append_bos=False, append_eos=False):
         s = torch.cat([bos_item, s])
     if append_eos:
         s = torch.cat([s, eos_item])
+    print(f"encoded line: {s}")
     return s
 
 def construct_sample1(image: Image, instruction: str):
@@ -280,7 +288,7 @@ for kk in range(len(images)):
         
         sample = utils.move_to_cuda(sample) if use_cuda else sample
         sample = utils.apply_to_sample(apply_half, sample) if use_fp16 else sample
-
+        print(f"Sample : {sample}")
         # Generate result
         with torch.no_grad():
             hypos = task.inference_step(generator, models, sample)
@@ -303,7 +311,7 @@ for kk in range(len(images)):
         
         sample = utils.move_to_cuda(sample) if use_cuda else sample
         sample = utils.apply_to_sample(apply_half, sample) if use_fp16 else sample
-
+        print(f"Sample : {sample}")
         # Generate result
         with torch.no_grad():
             hypos = task.inference_step(generator, models, sample)
@@ -313,8 +321,8 @@ for kk in range(len(images)):
         infer_res['gts'].append(gt)
  
     
-    #print(gt)
-    #print(tokens)
+    print(f"gt {gt}")
+    print(f"tokens {tokens}")
 
 end = time.time()
 print(f"{end - start:.5f} sec")
