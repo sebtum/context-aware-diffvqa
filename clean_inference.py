@@ -17,6 +17,8 @@ import csv
 from concurrent.futures import ThreadPoolExecutor
 import sys
 import logging
+import psutil
+import threading
 
 # Constants
 MEAN = [0.5, 0.5, 0.5]
@@ -41,7 +43,7 @@ class PLURALInference:
         self.generator = None
         self.start_time = datetime.now()
         # Increase the field size limit
-        csv.field_size_limit(5 * 1024 * 1024)  # 6 MB limit (approx 3 million characters)
+        csv.field_size_limit(21 * 1024 * 1024)  # 21 MB limit (approx 20 million characters)
 
         self.configure_logging()
 
@@ -70,6 +72,12 @@ class PLURALInference:
         self.logger.info(f"PLURALInference initialized with batch size={self.batch_size} and num_workers={self.num_workers}")
         self.logger.info(f"CSV field size limit set to: {csv.field_size_limit()}")
 
+    def log_memory_usage(self, tag=""):
+        """Log memory usage of the current process."""
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        self.logger.info(f"[{tag}] Memory Usage: {memory_info.rss / (1024 ** 2):.2f} MB")  # Resident memory in MB
+    
     # Initialize the model and task
     def initialize_model(self):
         input_args = [
@@ -149,6 +157,7 @@ class PLURALInference:
 
                 image1 = Image.open(BytesIO(base64.urlsafe_b64decode(item["image"])))
                 patch_image = patch_resize_transform(image1).unsqueeze(0)
+                image1.close()
 
                 sample = {
                     "id": torch.LongTensor([42]),
@@ -160,12 +169,17 @@ class PLURALInference:
                     }
                 }
 
-                if item["prev_image"]:
+                if item.get("prev_image"):
                     image2 = Image.open(BytesIO(base64.urlsafe_b64decode(item["prev_image"])))
                     sample["net_input"]["patch_images_2"] = patch_resize_transform(image2).unsqueeze(0)
-                self.logger.debug(f"Sample: {sample}")
+                    image2.close()
+                #self.logger.debug(f"Sample: {sample}")
                 samples.append(sample)
                 gts.append(item["gt"])
+
+                # Clean up variables
+                del instruction, instruction_length, patch_image, sample
+
             except KeyError as e:
                 self.logger.error(f"Missing key in item {i + 1}: {e}", exc_info=True)
             except base64.binascii.Error as e:
@@ -183,7 +197,6 @@ class PLURALInference:
             for word in text.strip().split()
         ]
         line = ' '.join(line)
-        self.logger.debug(f"Line after bpe: {line}")
         s = self.task.tgt_dict.encode_line(
             line=line,
             add_if_not_exist=False,
@@ -193,13 +206,16 @@ class PLURALInference:
             s = torch.cat([torch.LongTensor([self.task.src_dict.bos()]), s])
         if append_eos:
             s = torch.cat([s, torch.LongTensor([self.task.src_dict.eos()])])
-        self.logger.debug(f"Encoded line: {s}")
+        del line
         return s
     
         # Process a single batch
     def process_batch(self, batch):
-        self.logger.debug("Constructing batch...")
+        #self.logger.debug("Constructing batch...")
+        thread_id = threading.get_ident()
+        self.log_memory_usage(f"Processing batch and startin its construction with thread id {thread_id}")
         samples, gts = self.construct_batch(batch)
+        self.log_memory_usage(f"After constructing batch with thread id {thread_id}")
         #self.logger.debug(f"Constructed batch samples: {samples[:1]}")  # Log the first sample for inspection
         #self.logger.debug(f"Ground truths: {gts[:1]}")  # Log the first ground truth
 
@@ -211,22 +227,29 @@ class PLURALInference:
         for i, sample in enumerate(samples):
             try:
                 with torch.no_grad():
-                    self.logger.debug("Running inference step...")
+                    #self.logger.debug("Running inference step...")
+                    self.log_memory_usage(f"Before inference tid {thread_id}")
                     hypos = self.task.inference_step(self.generator, self.models, sample)
-                    self.logger.debug(f"Inference output: {hypos[:1]}")  # Log first output for inspection
+                    self.log_memory_usage(f"After inference tid {thread_id}")
+                    #self.logger.debug(f"Inference output: {hypos[:1]}")  # Log first output for inspection
             except Exception as e:
                 self.logger.error(f"Error during inference step: {e}", exc_info=True)
                 raise
         
             try:
                 with torch.no_grad():
+                    self.log_memory_usage(f"Before decoding tid {thread_id}")
                     tokens, _, _ = self.decode_fn(hypos[0][0]["tokens"], bpe=self.task.bpe)
+                    self.log_memory_usage(f"After decoding tid {thread_id}")
             except Exception as e:
                 self.logger.error(f"Error during decoding of sample {i} in a batch.")
-            if i == 0:
-                self.logger.debug(f"First tokens output from decoder function: {tokens}.")
             infer_results["res"].append(tokens)
             infer_results["gts"].append(gts[i])
+            self.log_memory_usage(f"After appending inference results tid {thread_id}")
+            # Clear tensors and free GPU memory
+        del samples, gts, hypos, tokens
+        torch.cuda.empty_cache()  # Clear GPU memory cache
+        self.log_memory_usage(f"After processing batch with thread id {thread_id}")
         return infer_results
 
     def run_parallel_inference(self):
@@ -247,39 +270,41 @@ class PLURALInference:
 
                     # When processing batch size is reached, submit for processing
                     if len(batch_data) == self.batch_size:
-                        self.logger.debug(f"Submitting batch {processed_batches + 1}")
-                        futures.append(executor.submit(self.process_batch, batch_data))
+                        if processed_batches % 10 == 0:
+                            self.logger.debug(f"Submitting batch {processed_batches + 1}")
+                        self.log_memory_usage("Before appending and submiting batch...")
+                        #futures.append(executor.submit(self.process_batch, batch_data))
+                        futures.append(self.process_batch(batch_data)) #FIXME
+                        self.log_memory_usage("After appending and submitting batch...")
                         batch_data = []
+                        self.log_memory_usage("After clearing batch data")
                         processed_batches += 1
 
                 # Process remaining data
                 if batch_data:
-                    futures.append(executor.submit(self.process_batch, batch_data))
+                    self.log_memory_usage("Before remaining batch processing...")
+                    #futures.append(executor.submit(self.process_batch, batch_data))
+                    futures.append(self.process_batch(batch_data))
                     processed_batches += 1
 
                 # Step 2: Collect results and write in chunks
                 for future in futures:
                     try:
-                        batch_results = future.result()  # Get results from process_batch
+                        self.log_memory_usage("Before collecting batch results...")
+                        #batch_results = future.result()  # Get results from process_batch
+                        batch_results = future
+                        self.log_memory_usage("After collecting batch results...")
                         buffer["res"].extend(batch_results["res"])  # Extend tokens
                         buffer["gts"].extend(batch_results["gts"])  # Extend ground truths
-                        self.logger.debug(f"Batch completed.")
+                        self.log_memory_usage("After appending to buffer...")
+                        #self.logger.debug(f"Batch completed.")
                     except Exception as e:
                         self.logger.error(f"Error during batch processing: {e}", exc_info=True)
 
-                    # Write to file when buffer reaches the write chunk size
-                    #if len(buffer) >= self.write_chunk_size:
-                    #    chunk_counter += 1
-                    #    self.logger.info(f"Writing chunk {chunk_counter} with {self.write_chunk_size} results to file.")
-                    #    self.write_results_chunk(buffer[:self.write_chunk_size])
-                    #    buffer = buffer[self.write_chunk_size:]  # Retain leftovers in the buffer
-                # Write remaining results in buffer
-                #if buffer:
-                #    self.logger.info(f"Writing remaining {len(buffer)} results to file.")
-                #    self.write_results_chunk(buffer)
             if buffer:
                 self.write_results(buffer)
                 self.logger.info("Parallel inference completed successfully.")
+                buffer = {"res": [], "gts": []}  # Clear the buffer
             else:
                 self.logger.error(f"No data to be written. Empty buffer.")
                 sys.exit(0)
@@ -293,18 +318,14 @@ class PLURALInference:
     def get_symbols_to_strip_from_output(self):
         if hasattr(self.generator, "symbols_to_strip_from_output"):
             sym2strip = self.generator.symbols_to_strip_from_output
-            self.logger.debug(f"Symbols to strip option 1: {sym2strip}")
             return sym2strip
         else:
             sym2strip = {self.generator.bos, self.generator.eos}
-            self.logger.debug(f"Symbols to strip option 2: {sym2strip}")
             return sym2strip
         
     # Decode model output
     def decode_fn(self, x, bpe=None, tokenizer=None):
-        self.logger.debug(f"String to decode: {x}")
         decoded_str = self.task.tgt_dict.string(x.int().cpu(), extra_symbols_to_ignore=self.get_symbols_to_strip_from_output())
-        self.logger.debug(f"Decoded string: {decoded_str}")
         token_result, bin_result, img_result = [], [], []
 
         for token in decoded_str.strip().split():
@@ -315,43 +336,13 @@ class PLURALInference:
             else:
                 if bpe is not None:
                     token = bpe.decode('{}'.format(token))
-                    self.logger.debug(f"Decoded bpe:{token}")
                 if tokenizer is not None:
                     token = tokenizer.decode(token)
                 if token.startswith(' ') or len(token_result) == 0:
                     token_result.append(token.strip())
-                    self.logger.debug(f"appending token {token}")
                 else:
                     token_result[-1] += token
-                    self.logger.debug(f"adding up token {token}")
-        self.logger.debug(f"Classified decoding:\n {token_result}\n {bin_result}\n {img_result}")
         return ' '.join(token_result), ' '.join(bin_result), ' '.join(img_result)
-
-
-    def write_results_chunk(self, chunk):
-        """Write a chunk of results to the JSON file."""
-        res_file_path = f"{self.inference_path}/{self.results_file}"
-        gts_file_path = f"{self.inference_path}/{self.annotation_file}"
-
-        res_data = [{"image_id": str(i), "caption": r["tokens"]} for i, r in enumerate(chunk)]
-        gts_data = [{"id": str(i), "caption": r["gt"]} for i, r in enumerate(chunk)]
-
-        # Append chunk to files
-        try:
-            with open(res_file_path, 'a') as res_fp:
-                json.dump(res_data, res_fp)
-                res_fp.write("\n")  # Add newline for clarity
-
-            with open(gts_file_path, 'a') as gts_fp:
-                json.dump(gts_data, gts_fp)
-                gts_fp.write("\n")
-        except FileNotFoundError as e:
-            self.logger.error(f"File not found error while writing chunk: {e}", exc_info=True)
-        except IOError as e:
-            self.logger.error(f"I/O error while writing chunk: {e}", exc_info=True)
-        except Exception as e:
-            self.logger.error(f"Unexpected error during file writing: {e}", exc_info=True)
-            raise
 
     def write_results(self, infer_res):
         """Write the entire results and annotations in COCO format."""
@@ -414,9 +405,9 @@ def main():
     timestamp = datetime.now().strftime("%Y_%m_%d_%H:%M:%S")
     workspace = "/home/guests/sebastian_sotela"
     inference_path = f"{workspace}/logs/reportgen/inference"
-    test_data_file = "mimic_diff_qa_s2_valid.tsv"#FIXME
-    #test_data_file = "mimic_diff_qa_s2_test.tsv"#FIXME
-    test_data = f"{workspace}/data_pre_runs/tsv_output_data/10_samples/{test_data_file}"
+    #test_data_file = "mimic_diff_qa_s2_valid.tsv"#FIXME
+    test_data_file = "mimic_diff_qa_s2_test.tsv"
+    test_data = f"{workspace}/data_pre_runs/tsv_output_data/100_samples/{test_data_file}" #FIXME
     checkpoint_file = "PLURAL.pt"
     model_path = f"/home/polyaxon-data/data1/mimic/PLURAL/checkpoints/{checkpoint_file}"
     
@@ -431,7 +422,7 @@ def main():
 
     inference = PLURALInference(
         workspace, test_data, model_path, inference_path,
-        annotation_file, results_file, batch_size=16, num_workers=8,
+        annotation_file, results_file, batch_size=8, num_workers=1,
         write_chunk_size=500
     )
     if just_score == True:
