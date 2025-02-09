@@ -1,33 +1,53 @@
 
-export MASTER_PORT=1061
+export MASTER_PORT=1062
 
-ws=/home/guests/sebastian_sotela
-plural=${ws}/PLURAL
-log_dir=${ws}/logs/reportgen/pretrain
-checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
-save_dir=${checkpoints}/pretrain
+# Check if IN_SERAPH is set to 1
+if [ "$IN_SERAPH" -eq 1 ]; then
+    echo "IN_SERAPH is set to 1"
+    ws=/data/geraugi/plural
+    plural=${ws}/../repos/PLURAL
+    log_dir=${ws}/logs/pretrain
+    tensorboard_logdir=${log_dir}/tensorboard_$(date +"%Y-%m-%d_%H-%M-%S")
+    checkpoints=${ws}/checkpoints
+    save_dir=${checkpoints}/pretrain
+    bpe_dir=${plural}/utils/BPE
+    user_dir=${plural}/ofa_module
+    data_dir=${ws}/pre_processed_data
+else
+    echo "IN_SERAPH is not set to 1 or 0"
+    ws=/home/guests/sebastian_sotela
+    plural=${ws}/PLURAL
+    log_dir=${ws}/logs/reportgen/pretrain
+    tensorboard_logdir=${log_dir}/tensorboard_$(date +"%Y-%m-%d_%H-%M-%S")
+    checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
+    save_dir=${checkpoints}/pretrain
+    bpe_dir=${plural}/utils/BPE
+    user_dir=${plural}/ofa_module
+    data_dir=${ws}/data_pre_runs/tsv_output_data
+fi
+
 mkdir -p $log_dir $save_dir
-
-bpe_dir=${plural}/utils/BPE
-user_dir=${plural}/ofa_module
-
-data_dir=${plural}/data
-
 # Put the larger volume of data in 'data' and the smaller volume of data in 'diff_data'.
-data=${data_dir}/mimic_findings_train_20241112_192009.pkl,${data_dir}/mimic_findings_valid_20241112_192009.pkl
+# data=${data_dir}/mimic_impressions_train.tsv,${data_dir}/mimic_impressions_valid.tsv
+# data=${data_dir}/mimic_findings_train.tsv,${data_dir}/mimic_findings_valid.tsv
+data=${data_dir}/mimic_diff_qa_s2_train.tsv,${data_dir}/mimic_diff_qa_s2_valid.tsv
 #diff_data=${data_dir}/mimic_uni_all_train.tsv,${data_dir}/mimic_uni_all_valid.tsv
 
-restore_file=${checkpoints}/ofa_base.pt
+#restore_file=${checkpoints}/ofa_base.pt
+#checkpoint after impressions
+#restore_file=${checkpoints}/pretrain/3_0.06_200000_2025-01-08_09-24-40/checkpoint_best.pt 
+#checkpoint after first impressions and then findings
+restore_file=${checkpoints}/pretrain/3_0.06_200000_2025-01-08_22-22-20/checkpoint_best.pt 
 selected_cols=0,1,2,3,4,5,6,7
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.1
-lr=1e-4
-max_epoch=5
+lr=2.7e-4 #for 8 gpus
+#max_epoch=5 #modify below
 warmup_ratio=0.06
-batch_size=16
-update_freq=4
+batch_size=8
+update_freq=8
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
 decoder_drop_path_rate=0.1
@@ -42,19 +62,18 @@ patch_image_size=384
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
 drop_worst_ratio=0.2
 # FIXME: Check CUDA availability, master port
-for max_epoch in 100; do
+for max_epoch in 3; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in 0.06; do
     echo "warmup_ratio "${warmup_ratio}
     for drop_worst_after in 200000; do
       echo "drop_worst_after "${drop_worst_after}
 
-      log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}".log"
-      save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}
+      log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")".log"
+      save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")
       mkdir -p $save_path
-      CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ${plural}/train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ${plural}/train.py \
           $data \
-          --diff-data=${diff_data} \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
           --user-dir=${user_dir} \
@@ -87,7 +106,7 @@ for max_epoch in 100; do
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
           --save-interval=1 --validate-interval=1 \
-          --save-interval-updates=500 --validate-interval-updates=500 \
+          --save-interval-updates=200 --validate-interval-updates=100 \
           --eval-args='{"beam":5,"max_len_b":16,"no_repeat_ngram_size":3}' \
           --best-checkpoint-metric=loss \
           --max-src-length=${max_src_length} \
@@ -104,9 +123,9 @@ for max_epoch in 100; do
           --patch-image-size=${patch_image_size} \
           --drop-worst-ratio=${drop_worst_ratio} \
           --drop-worst-after=${drop_worst_after} \
-          --fp16 \
-          --fp16-scale-window=512 \
-          --num-workers=0 > ${log_file} 2>&1
+          --tensorboard-logdir=${tensorboard_logdir} \
+          --num-workers=1
     done
   done
 done
+#          --diff-data=${diff_data} \

@@ -1,33 +1,48 @@
 
-export MASTER_PORT=1061
+export MASTER_PORT=1062
 
-ws=/home/guests/sebastian_sotela
-plural=${ws}/PLURAL
-log_dir=${ws}/logs/reportgen/finetune
-tensorboard_logdir=${log_dir}/tensorboard_$(date +"%Y-%m-%d_%H-%M-%S")
-checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
-save_dir=${checkpoints}/finetune
+# Check if IN_SERAPH is set to 1
+if [ "$IN_SERAPH" -eq 1 ]; then
+    echo "IN_SERAPH is set to 1"
+    ws=/data/geraugi/plural
+    plural=${ws}/../repos/PLURAL
+    log_dir=${ws}/logs/finetune
+    tensorboard_logdir=${log_dir}/tensorboard_$(date +"%Y-%m-%d_%H-%M-%S")
+    checkpoints=${ws}/checkpoints
+    save_dir=${checkpoints}/finetune
+    bpe_dir=${plural}/utils/BPE
+    user_dir=${plural}/ofa_module
+    data_dir=${ws}/pre_processed_data
+else
+    echo "IN_SERAPH is not set to 1 or 0"
+    ws=/home/guests/sebastian_sotela
+    plural=${ws}/PLURAL
+    log_dir=${ws}/logs/reportgen/finetune
+    tensorboard_logdir=${log_dir}/tensorboard_$(date +"%Y-%m-%d_%H-%M-%S")
+    checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
+    save_dir=${checkpoints}/finetune
+    bpe_dir=${plural}/utils/BPE
+    user_dir=${plural}/ofa_module
+    data_dir=${ws}/data_pre_runs/tsv_output_data
+fi
+
+
 mkdir -p $log_dir $save_dir
-
-bpe_dir=${plural}/utils/BPE
-user_dir=${plural}/ofa_module
-
-data_dir=${ws}/data_pre_runs/tsv_output_data
 
 # Put the larger volume of data in 'data' and the smaller volume of data in 'diff_data'.
 # data=${data_dir}/2_samples/mimic_diff_qa_train_2024_11_22_13:01:12.tsv,${data_dir}/2_samples/mimic_diff_qa_valid_2024_11_22_13:01:12.tsv
-data=${data_dir}/100_samples/mimic_diff_qa_s2_train.tsv,${data_dir}/100_samples/mimic_diff_qa_s2_valid.tsv
+data=${data_dir}/1000_samples/mimic_diff_qa_s2_train.tsv,${data_dir}/1000_samples/mimic_diff_qa_s2_valid.tsv
 
-restore_file=${checkpoints}/ofa_base.pt # FIXME: UPDATE
+restore_file=${checkpoints}/PLURAL.pt # FIXME: UPDATE
 selected_cols=0,1,2,3,4,5,6,7
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0
-lr=1e-3
+lr=1e-4
 max_epoch=10 # 500
 warmup_ratio=0 # 0.06
-batch_size=1
+batch_size=4
 update_freq=1
 resnet_drop_path_rate=0
 encoder_drop_path_rate=0
@@ -51,12 +66,9 @@ save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}
 mkdir -p $save_path
 set -x
 ulimit -a
-echo "start command"
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
-export OMP_NUM_THREADS=8  # Adjust to the number of CPU cores per task
-#python3 ${plural}/train.py \
-#CUDA_VISIBLE_DEVICES=0,1 python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=${MASTER_PORT} ${plural}/train.py \
-CUDA_VISIBLE_DEVICES=0,1 python3 -m torchrun --nproc_per_node=2 --master_port=${MASTER_PORT} ${plural}/train.py \
+
+CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ${plural}/train.py \
     $data \
     --selected-cols=${selected_cols} \
     --bpe-dir=${bpe_dir} \
@@ -87,7 +99,6 @@ CUDA_VISIBLE_DEVICES=0,1 python3 -m torchrun --nproc_per_node=2 --master_port=${
     --clip-norm=${clip_norm} \
     --lr=${lr} \
     --max-epoch=${max_epoch} \
-    --tensorboard-logdir=${tensorboard_logdir} \
     --log-format=simple \
     --log-interval=10 \
     --fixed-validation-seed=7 \
@@ -109,7 +120,8 @@ CUDA_VISIBLE_DEVICES=0,1 python3 -m torchrun --nproc_per_node=2 --master_port=${
     --patch-image-size=${patch_image_size} \
     --drop-worst-ratio=${drop_worst_ratio} \
     --drop-worst-after=${drop_worst_after} \
-    --fp16 \
-    --fp16-scale-window=512 \
-    --num-workers=8
+    --num-workers=1 \
+    --tensorboard-logdir=${tensorboard_logdir}
 echo "done"
+#    --fp16 \
+#    --fp16-scale-window=512 \

@@ -1,37 +1,53 @@
 
 export MASTER_PORT=1061
 
-ws=/home/guests/sebastian_sotela
-plural=${ws}/PLURAL
-log_dir=${ws}/logs/reportgen/finetune
-checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
-save_dir=${checkpoints}/finetune
+# Check if IN_SERAPH is set to 1
+if [ "$IN_SERAPH" -eq 1 ]; then
+    echo "IN_SERAPH is set to 1"
+    ws=/data/geraugi/plural
+    plural=${ws}/../repos/PLURAL
+    log_dir=${ws}/logs/finetune
+    tensorboard_logdir=${log_dir}/tensorboard_$(date +"%Y-%m-%d_%H-%M-%S")
+    checkpoints=${ws}/checkpoints
+    save_dir=${checkpoints}/finetune
+    bpe_dir=${plural}/utils/BPE
+    user_dir=${plural}/ofa_module
+    data_dir=${ws}/pre_processed_data
+else
+    echo "IN_SERAPH is not set to 1 or 0"
+    ws=/home/guests/sebastian_sotela
+    plural=${ws}/PLURAL
+    log_dir=${ws}/logs/reportgen/finetune
+    tensorboard_logdir=${log_dir}/tensorboard_$(date +"%Y-%m-%d_%H-%M-%S")
+    checkpoints=/home/polyaxon-data/data1/mimic/PLURAL/checkpoints
+    save_dir=${checkpoints}/finetune
+    bpe_dir=${plural}/utils/BPE
+    user_dir=${plural}/ofa_module
+    data_dir=${ws}/data_pre_runs/tsv_output_data
+fi
+
 mkdir -p $log_dir $save_dir
 
-bpe_dir=${plural}/utils/BPE
-user_dir=${plural}/ofa_module
+data=${data_dir}/mimic_diff_qa_train.tsv,${data_dir}/mimic_diff_qa_valid.tsv
 
-data_dir=${plural}/data
-#data=${data_dir}/mimic_diff_vqa_train.tsv,${data_dir}/mimic_diff_vqa_valid.tsv
-data=${data_dir}/mimic_qa_train_2024_11_13_23:37:15.pkl,${data_dir}/mimic_qa_valid_2024_11_13_23:37:15.pkl
-
-
-#restore_file=/data/PLURAL/reportgen/pretrain/100_0.06_200000/checkpoint_best.pt
-restore_file=${checkpoint}/PLURAL.pt #FIXME
+# checkpoint after training impressions findings and general diff vqa sequentially
+restore_file=/data/PLURAL/reportgen/pretrain/3_0.06_200000_2025-01-09_09-21-55/checkpoint_best.pt
+#restore_file=${checkpoint}/PLURAL.pt #FIXME
 selected_cols=0,1,2,3,4,5,6,7
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.1
-lr=1e-4
-max_epoch=5
+lr=2.7e-4
+#max_epoch=5
 warmup_ratio=0.06
-batch_size=16
-update_freq=4
+batch_size=8
+update_freq=8
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
 decoder_drop_path_rate=0.1
 dropout=0.1
+weight_decay=0.01
 attention_dropout=0.0
 max_src_length=100
 max_tgt_length=100
@@ -40,7 +56,7 @@ patch_image_size=384
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
 drop_worst_ratio=0.2
 
-for max_epoch in 100; do
+for max_epoch in 4; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in 0.06; do
     echo "warmup_ratio "${warmup_ratio}
@@ -76,14 +92,14 @@ for max_epoch in 100; do
           --decoder-drop-path-rate=${decoder_drop_path_rate} \
           --dropout=${dropout} \
           --attention-dropout=${attention_dropout} \
-          --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
+          --weight-decay=${weight_decay} --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=2.0 \
           --lr-scheduler=polynomial_decay --lr=${lr} \
           --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
           --save-interval=1 --validate-interval=1 \
-          --save-interval-updates=500 --validate-interval-updates=500 \
+          --save-interval-updates=200 --validate-interval-updates=500 \
           --eval-args='{"beam":5,"max_len_b":16,"no_repeat_ngram_size":3}' \
           --best-checkpoint-metric=loss \
           --max-src-length=${max_src_length} \
@@ -100,9 +116,12 @@ for max_epoch in 100; do
           --patch-image-size=${patch_image_size} \
           --drop-worst-ratio=${drop_worst_ratio} \
           --drop-worst-after=${drop_worst_after} \
-          --fp16 \
-          --fp16-scale-window=512 \
-          --num-workers=0 > ${log_file} 2>&1
+          --tensorboard-logdir=${tensorboard_logdir} \
+          --num-workers=1 \
+          --amp \
+          --amp-scale-window=10
     done
   done
 done
+#--fp16 \
+#          --fp16-scale-window=512 \
