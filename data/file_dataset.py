@@ -62,18 +62,27 @@ class FileDataset:
             for line in fp:
                 self.lineid_to_offset.append(offset)
                 self.total_row_count += 1
-                offset += len(line.encode('utf-8')) + 1 
+                offset += len(line.encode('utf-8'))
+                
         self._compute_start_pos_and_row_count()
         print("local datafile {} slice_id {} finished initializing row_count and line_idx-to-offset mapping".format(
             self.file_path, self.slice_id))
 
     def _compute_start_pos_and_row_count(self):
-        self.row_count = self.total_row_count // self.slice_count
-        if self.slice_id < self.total_row_count - self.row_count * self.slice_count:
-            self.row_count += 1
-            self.start_pos = self.row_count * self.slice_id
+        base_row_count = self.total_row_count // self.slice_count
+        extra_rows = self.total_row_count % self.slice_count
+
+        # Distribute extra rows to the first `extra_rows` slices
+        if self.slice_id < extra_rows:
+            self.row_count = base_row_count + 1
+            self.start_pos = self.slice_id * self.row_count
         else:
-            self.start_pos = self.row_count * self.slice_id + (self.total_row_count - self.row_count * self.slice_count)
+            self.row_count = base_row_count
+            self.start_pos = self.slice_id * self.row_count + extra_rows
+        
+        # Ensure start_pos is within bounds
+        if self.start_pos >= len(self.lineid_to_offset):
+            raise IndexError(f"start_pos {self.start_pos} is out of range for lineid_to_offset with size {len(self.lineid_to_offset)}")
 
     def _get_reader(self):
         fp = open(self.file_path, "r")
@@ -82,16 +91,25 @@ class FileDataset:
 
     def _seek(self, offset=0):
         try:
-            print("slice_id {} seek offset {}".format(self.slice_id, self.start_pos + offset))
+            target_index = self.start_pos + offset
+            if target_index >= len(self.lineid_to_offset) or target_index < 0:
+                raise IndexError(f"Seek target index {target_index} is out of range.")
+            print("slice_id {} seek offset {}".format(self.slice_id, target_index))
+            #traceback.print_stack(limit=10)
             self._reader.seek(self.lineid_to_offset[self.start_pos + offset])
             self.data_cnt = offset
         except Exception:
-            print("slice_id {} seek offset {}".format(self.slice_id, offset))
-            self._reader.seek(self.lineid_to_offset[offset])
+            print("slice_id {} seek offset {}".format(self.slice_id, target_index))
+            self._reader.seek(self.lineid_to_offset[target_index])
             self.data_cnt = offset
 
     def __del__(self):
-        self._reader.close()
+        if hasattr(self, "_reader") and self._reader:
+            try:
+                self._reader.close()
+            except Exception as e:
+                print(f"Error closing reader: {e}")
+
 
     def __len__(self):
         return self.row_count

@@ -534,6 +534,7 @@ def broadcast(tensor, src, group):
         dist.broadcast(tensor, src=src, group=group)
 
 
+
 def all_to_all(tensor, group):
     """Perform an all-to-all operation on a 1D Tensor."""
     assert tensor.dim() == 1
@@ -718,26 +719,40 @@ def broadcast_tensors(
 
     # share metadata first to simplify transfer
     is_src_rank = (get_rank(group) == src_rank)
+
+    rank = get_rank(group)  # Current rank
+    world_size = torch.distributed.get_world_size(group)
+    #print(
+    #    f"[Rank {rank}/{world_size}] Starting broadcast_tensors. "
+    #    f"is_src_rank={is_src_rank}, dist_device={dist_device}"
+    #)
     if is_src_rank:
         metadata = [
             {"size": t.size(), "dtype": t.dtype, "device": t.device} for t in tensors
         ]
+        #print(f"[Rank {rank}] Broadcasting metadata: {metadata}")
         metadata = _broadcast_object_slow(metadata, src_rank, group, dist_device)
     else:
+        #print(f"[Rank {rank}] Waiting for metadata broadcast")
         metadata = _broadcast_object_slow(None, src_rank, group, dist_device)
 
     out_tensors = []
     for i, meta in enumerate(metadata):
+        #print(f"[Rank {rank}] Processing tensor {i}, metadata={meta}")
         if is_src_rank:
             tensor = tensors[i]
+            #print(f"[Rank {rank}] Broadcasting tensor {tensor.size()}")
             broadcast(tensors[i].to(dist_device), src=src_rank, group=group)
         else:
             tensor = torch.zeros(
-                [meta["size"].numel()], dtype=meta["dtype"], device=dist_device
+            #    [meta["size"].numel()], dtype=meta["dtype"], device=dist_device
+                meta["size"], dtype=meta["dtype"], device=dist_device
             )
+            #print(f"[Rank {rank}] Receiving broadcasted tensor {tensor.size()}")
             broadcast(tensor, src=src_rank, group=group)
         tensor = tensor.view(meta["size"]).to(meta["device"])
         out_tensors.append(tensor)
+    #print(f"[Rank {rank}] Completed broadcast_tensors")
     return out_tensors
 
 
@@ -748,6 +763,9 @@ def broadcast_object(
     dist_device: Optional[torch.device] = None,
 ) -> Any:
     """Broadcast an arbitrary Python object to other workers."""
+    rank = get_rank(group)
+
+    #print(f"[Rank {rank}] Starting broadcast_object. src_rank={src_rank}")
     if dist_device is None:
         if torch.distributed.get_backend(group) == "nccl":
             dist_device = torch.device("cuda")
@@ -759,33 +777,47 @@ def broadcast_object(
         # directly, avoiding unnecessary serialization/deserialization
         tensors = []
         obj = _split_tensors_from_obj(obj, tensors)
+        #print(f"[Rank {rank}] Broadcasting non-tensor object: {obj}")
         obj = _broadcast_object_slow(obj, src_rank, group, dist_device)
+        #print(f"[Rank {rank}] Broadcasting tensors")
         tensors = broadcast_tensors(tensors, src_rank, group, dist_device)
     else:
+        #print(f"[Rank {rank}] Waiting to receive object")
         obj = _broadcast_object_slow(None, src_rank, group, dist_device)
+        #print(f"[Rank {rank}] Waiting to receive tensors")
         tensors = broadcast_tensors(None, src_rank, group, dist_device)
+
+    #print(f"[Rank {rank}] Completed broadcast_object")
     return _put_tensors_in_obj(obj, tensors)
 
 
 def _broadcast_object_slow(
     obj: Any, src_rank: int, group: object, dist_device: torch.device,
 ) -> Any:
+    rank = get_rank(group)
+    #print(
+    #    f"[Rank {rank}] Entering _broadcast_object_slow. src_rank={src_rank}, dist_device={dist_device}"
+    #)
     if get_rank(group) == src_rank:
         # Emit data
         buffer = io.BytesIO()
         torch.save(obj, buffer)
         buffer = torch.ByteTensor(buffer.getbuffer()).to(dist_device)
         length = torch.LongTensor([len(buffer)]).to(dist_device)
+        #print(f"[Rank {rank}] Broadcasting object of length {length.item()}")
         broadcast(length, src=src_rank, group=group)
         broadcast(buffer, src=src_rank, group=group)
     else:
         # Fetch from the source
         length = torch.LongTensor([0]).to(dist_device)
+        #print(f"[Rank {rank}] Waiting to receive object length")
         broadcast(length, src=src_rank, group=group)
         buffer = torch.ByteTensor(int(length.item())).to(dist_device)
+        #print(f"[Rank {rank}] Receiving object buffer of length {length.item()}")
         broadcast(buffer, src=src_rank, group=group)
         buffer = io.BytesIO(buffer.cpu().numpy())
         obj = torch.load(buffer, map_location="cpu")
+        #print(f"[Rank {rank}] Received object")
     return obj
 
 

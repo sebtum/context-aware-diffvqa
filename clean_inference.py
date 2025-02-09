@@ -24,9 +24,30 @@ import threading
 MEAN = [0.5, 0.5, 0.5]
 STD = [0.5, 0.5, 0.5]
 
+def configure_logging():
+    """Set up logging with stdout and stderr separation."""
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    # Separate log levels for handlers
+    stdout_handler.setLevel(logging.INFO)  # INFO and DEBUG logs go to stdout
+    stderr_handler.setLevel(logging.ERROR)  # ERROR and CRITICAL logs go to stderr
+    # Format for logs
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    stdout_handler.setFormatter(formatter)
+    stderr_handler.setFormatter(formatter)
+    # Configure the logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)  # Capture all log levels
+    logger.addHandler(stdout_handler)
+    logger.addHandler(stderr_handler)
+    # Log initialization details
+    logger.info("Logging configured with stdout and stderr separation.")
+    return logger
+
 # Main Class for Model Evaluation
 class PLURALInference:
     def __init__(self, workspace, test_data, model_path, inference_path, annotation_file, results_file, batch_size, num_workers, write_chunk_size):
+        self.logger = logging.getLogger(__name__)
         self.workspace = workspace
         self.test_data = test_data
         self.model_path = model_path
@@ -44,34 +65,9 @@ class PLURALInference:
         self.start_time = datetime.now()
         # Increase the field size limit
         csv.field_size_limit(21 * 1024 * 1024)  # 21 MB limit (approx 20 million characters)
-
-        self.configure_logging()
-
-    def configure_logging(self):
-        """Set up logging with stdout and stderr separation."""
-        stdout_handler = logging.StreamHandler(sys.stdout)
-        stderr_handler = logging.StreamHandler(sys.stderr)
-
-        # Separate log levels for handlers
-        stdout_handler.setLevel(logging.INFO)  # INFO and DEBUG logs go to stdout
-        stderr_handler.setLevel(logging.ERROR)  # ERROR and CRITICAL logs go to stderr
-
-        # Format for logs
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        stdout_handler.setFormatter(formatter)
-        stderr_handler.setFormatter(formatter)
-
-        # Configure the logger
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)  # Capture all log levels
-        self.logger.addHandler(stdout_handler)
-        self.logger.addHandler(stderr_handler)
-
-        # Log initialization details
-        self.logger.info("Logging configured with stdout and stderr separation.")
         self.logger.info(f"PLURALInference initialized with batch size={self.batch_size} and num_workers={self.num_workers}")
         self.logger.info(f"CSV field size limit set to: {csv.field_size_limit()}")
-
+    
     def log_memory_usage(self, tag=""):
         """Log memory usage of the current process."""
         process = psutil.Process(os.getpid())
@@ -213,9 +209,9 @@ class PLURALInference:
     def process_batch(self, batch):
         #self.logger.debug("Constructing batch...")
         thread_id = threading.get_ident()
-        self.log_memory_usage(f"Processing batch and startin its construction with thread id {thread_id}")
+        #self.log_memory_usage(f"Processing batch and startin its construction with thread id {thread_id}")
         samples, gts = self.construct_batch(batch)
-        self.log_memory_usage(f"After constructing batch with thread id {thread_id}")
+        #self.log_memory_usage(f"After constructing batch with thread id {thread_id}")
         #self.logger.debug(f"Constructed batch samples: {samples[:1]}")  # Log the first sample for inspection
         #self.logger.debug(f"Ground truths: {gts[:1]}")  # Log the first ground truth
 
@@ -228,9 +224,9 @@ class PLURALInference:
             try:
                 with torch.no_grad():
                     #self.logger.debug("Running inference step...")
-                    self.log_memory_usage(f"Before inference tid {thread_id}")
+                    #self.log_memory_usage(f"Before inference tid {thread_id}")
                     hypos = self.task.inference_step(self.generator, self.models, sample)
-                    self.log_memory_usage(f"After inference tid {thread_id}")
+                    #self.log_memory_usage(f"After inference tid {thread_id}")
                     #self.logger.debug(f"Inference output: {hypos[:1]}")  # Log first output for inspection
             except Exception as e:
                 self.logger.error(f"Error during inference step: {e}", exc_info=True)
@@ -238,18 +234,18 @@ class PLURALInference:
         
             try:
                 with torch.no_grad():
-                    self.log_memory_usage(f"Before decoding tid {thread_id}")
+                    #self.log_memory_usage(f"Before decoding tid {thread_id}")
                     tokens, _, _ = self.decode_fn(hypos[0][0]["tokens"], bpe=self.task.bpe)
-                    self.log_memory_usage(f"After decoding tid {thread_id}")
+                    #self.log_memory_usage(f"After decoding tid {thread_id}")
             except Exception as e:
                 self.logger.error(f"Error during decoding of sample {i} in a batch.")
             infer_results["res"].append(tokens)
             infer_results["gts"].append(gts[i])
-            self.log_memory_usage(f"After appending inference results tid {thread_id}")
+            #self.log_memory_usage(f"After appending inference results tid {thread_id}")
             # Clear tensors and free GPU memory
         del samples, gts, hypos, tokens
         torch.cuda.empty_cache()  # Clear GPU memory cache
-        self.log_memory_usage(f"After processing batch with thread id {thread_id}")
+        #self.log_memory_usage(f"After processing batch with thread id {thread_id}")
         return infer_results
 
     def run_parallel_inference(self):
@@ -272,17 +268,17 @@ class PLURALInference:
                     if len(batch_data) == self.batch_size:
                         if processed_batches % 10 == 0:
                             self.logger.debug(f"Submitting batch {processed_batches + 1}")
-                        self.log_memory_usage("Before appending and submiting batch...")
+                        #self.log_memory_usage("Before appending and submiting batch...")
                         #futures.append(executor.submit(self.process_batch, batch_data))
                         futures.append(self.process_batch(batch_data)) #FIXME
-                        self.log_memory_usage("After appending and submitting batch...")
+                        #self.log_memory_usage("After appending and submitting batch...")
                         batch_data = []
-                        self.log_memory_usage("After clearing batch data")
+                        #self.log_memory_usage("After clearing batch data")
                         processed_batches += 1
 
                 # Process remaining data
                 if batch_data:
-                    self.log_memory_usage("Before remaining batch processing...")
+                    #self.log_memory_usage("Before remaining batch processing...")
                     #futures.append(executor.submit(self.process_batch, batch_data))
                     futures.append(self.process_batch(batch_data))
                     processed_batches += 1
@@ -290,13 +286,13 @@ class PLURALInference:
                 # Step 2: Collect results and write in chunks
                 for future in futures:
                     try:
-                        self.log_memory_usage("Before collecting batch results...")
+                        #self.log_memory_usage("Before collecting batch results...")
                         #batch_results = future.result()  # Get results from process_batch
                         batch_results = future
-                        self.log_memory_usage("After collecting batch results...")
+                        #self.log_memory_usage("After collecting batch results...")
                         buffer["res"].extend(batch_results["res"])  # Extend tokens
                         buffer["gts"].extend(batch_results["gts"])  # Extend ground truths
-                        self.log_memory_usage("After appending to buffer...")
+                        #self.log_memory_usage("After appending to buffer...")
                         #self.logger.debug(f"Batch completed.")
                     except Exception as e:
                         self.logger.error(f"Error during batch processing: {e}", exc_info=True)
@@ -379,11 +375,11 @@ class PLURALInference:
 
 
     # Evaluate results using COCO metrics
-    def evaluate_results(self):
+    def evaluate_results(self, nltk_download_dir):
         start_time_eval = datetime.now()
         coco = COCO(f'{self.inference_path}/{self.annotation_file}')
         coco_result = coco.loadRes(f'{self.inference_path}/{self.results_file}')
-        coco_eval = COCOEvalCap(coco, coco_result)
+        coco_eval = COCOEvalCap(coco, coco_result, nltk_download_dir)
         coco_eval.params['image_id'] = coco_result.getImgIds()
         self.logger.info("Starting evaluation...")
         try:
@@ -402,35 +398,71 @@ class PLURALInference:
 
 # Main execution
 def main():
+    logger = configure_logging()
     timestamp = datetime.now().strftime("%Y_%m_%d_%H:%M:%S")
-    workspace = "/home/guests/sebastian_sotela"
-    inference_path = f"{workspace}/logs/reportgen/inference"
-    #test_data_file = "mimic_diff_qa_s2_valid.tsv"#FIXME
-    test_data_file = "mimic_diff_qa_s2_test.tsv"
-    test_data = f"{workspace}/data_pre_runs/tsv_output_data/100_samples/{test_data_file}" #FIXME
-    checkpoint_file = "PLURAL.pt"
-    model_path = f"/home/polyaxon-data/data1/mimic/PLURAL/checkpoints/{checkpoint_file}"
+    in_seraph = os.getenv("IN_SERAPH", "0") == "1"
+    if in_seraph:
+        logger.info("Running on seraph cluster...")
+        # NAS disk storage
+        nas_path = "/data/geraugi"
+        repo_ws = f"{nas_path}/repos"
+        plural_ws = f"{nas_path}/plural"
+        inference_path = f"{plural_ws}/inference"
+        test_data_file = "mimic_diff_qa_s2_test.tsv"
+        test_data = f"{plural_ws}/pre_processed_data/{test_data_file}"
+        #test_data = f"{plural_ws}/pre_processed_data/2_samples/{test_data_file}" #FIXME
+        
+        #checkpoint_file = "PLURAL.pt"
+        #model_path = f"{plural_ws}/checkpoints/{checkpoint_file}"
+        
+        # checkpoint after full sequential training
+        checkpoint_file = "checkpoint_best.pt"
+        #model_path = f"{plural_ws}/checkpoints/finetune/3_0.06_200000/{checkpoint_file}"
+        
+        # checkpoint before specific dvqa
+        #checkpoint_file = "checkpoint_best.pt"
+        model_path = f"{plural_ws}/checkpoints/pretrain/3_0.06_200000_2025-01-09_09-21-55/{checkpoint_file}"
+        
     
-    just_score = False
+    else:
+        logger.info("Running on ifl cluster...")
+        workspace = "/home/guests/sebastian_sotela"
+        inference_path = f"{workspace}/logs/reportgen/inference"
+        test_data_file = "mimic_diff_qa_s2_test.tsv"
+        test_data = f"{workspace}/data_pre_runs/tsv_output_data/100_samples/{test_data_file}" #FIXME
+        checkpoint_file = "PLURAL.pt"
+        model_path = f"/home/polyaxon-data/data1/mimic/PLURAL/checkpoints/{checkpoint_file}"
+    
+    just_score = True
 
     if just_score == True:
-        annotation_file = "gts_PLURA_diff_qa_s2_tes_2024_12_09_17:32:04.json"
-        results_file = "res_PLURA_diff_qa_s2_tes_2024_12_09_17:32:04.json"
+        # sequential general dvqa
+        #annotation_file = "gts_checkpoint_best_diff_qa_s2_test_2025_01_10_11:53:06.json"
+        #results_file = "res_checkpoint_best_diff_qa_s2_test_2025_01_10_11:53:06.json"
+        # sequential specific dvqa
+        #annotation_file = "gts_checkpoint_best_diff_qa_test_2025_01_10_08:30:10.json"
+        #results_file = "res_checkpoint_best_diff_qa_test_2025_01_10_08:30:10.json"
+        # plural benchmark general dvqa
+        #annotation_file = "gts_PLURAL_diff_qa_s2_test_2024_12_14_22:50:13.json"
+        #results_file = "res_PLURAL_diff_qa_s2_test_2024_12_14_22:50:13.json"
+        # plural benchmark specific dvqa
+        annotation_file = "gts_PLURAL_diff_qa_test_2024_12_15_02:27:49.json"
+        results_file = "res_PLURAL_diff_qa_test_2024_12_15_02:27:49.json"
     else:
         annotation_file = f"gts_{checkpoint_file[:-3]}_{test_data_file[6:-4]}_{timestamp}.json"
         results_file = f"res_{checkpoint_file[:-3]}_{test_data_file[6:-4]}_{timestamp}.json"
 
     inference = PLURALInference(
-        workspace, test_data, model_path, inference_path,
+        repo_ws, test_data, model_path, inference_path,
         annotation_file, results_file, batch_size=8, num_workers=1,
         write_chunk_size=500
     )
     if just_score == True:
-        inference.evaluate_results()
+        inference.evaluate_results(nas_path)
     else:
         inference.initialize_model()
         inference.run_parallel_inference()
-        inference.evaluate_results()
+        inference.evaluate_results(plural_ws)
         inference.logger.info(f"Execution Time: {datetime.now() - inference.start_time}")
 
 if __name__ == "__main__":

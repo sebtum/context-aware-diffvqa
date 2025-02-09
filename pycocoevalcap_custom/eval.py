@@ -10,7 +10,7 @@ import nltk
 
 
 class COCOEvalCap:
-    def __init__(self, coco, cocoRes):
+    def __init__(self, coco, cocoRes, download_dir):
         self.evalImgs = []
         self.eval = {}
         self.imgToEval = {}
@@ -18,12 +18,14 @@ class COCOEvalCap:
         self.cocoRes = cocoRes
         self.params = {'image_id': coco.getImgIds()}
         self.logger = logging.getLogger(__name__)
-        #self.logger.info("Download NLTK packages")
         self.logger.info("Append NLTK packages path")
-        #nltk.download('punkt', quiet=True)
-        #nltk.download('wordnet', quiet=True)
-        #nltk.download('omw-1.4', quiet=True)
-        nltk.data.path.append('/home/guests/sebastian_sotela/nltk_data')
+        nltk_dir = f'{download_dir}/nltk_data'
+        nltk.data.path.append(nltk_dir)
+        self.logger.info("Download NLTK packages") 
+        nltk.download('punkt', quiet=True, download_dir=download_dir)
+        nltk.download('wordnet', quiet=True, download_dir=download_dir)
+        nltk.download('omw-1.4', quiet=True, download_dir=download_dir)
+
     
     def evaluate(self):
         imgIds = self.params['image_id']
@@ -37,11 +39,11 @@ class COCOEvalCap:
         # =================================================
         # Set up scorers
         # =================================================
-        self.logger.info('Setting up NLTK Tokenizer...')
+        self.logger.info('Setting up PTB Tokenizer...')
         # FIXME using nltk for running on IFL slurm which
         # has no java
-        # tokenizer = PTBTokenizer()
-        tokenizer = NLTKTokenizer()
+        tokenizer = PTBTokenizer()
+        #tokenizer = NLTKTokenizer()
         self.logger.info("Tokenizing for evaluation...")
         gts  = tokenizer.tokenize(gts)
         res = tokenizer.tokenize(res)
@@ -54,8 +56,8 @@ class COCOEvalCap:
             (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
             # FIXME: Using hugging face implementation since java
             # is not available in ifl cluster
-            # (Meteor(),"METEOR"),
-            (MeteorHF(),"METEOR"),
+            (Meteor(),"METEOR"),
+            #(MeteorHF(),"METEOR"),
             (Rouge(), "ROUGE_L"),
             (Cider(), "CIDEr"),
             #(Spice(), "SPICE")
