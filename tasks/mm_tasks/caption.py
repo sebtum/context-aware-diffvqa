@@ -34,6 +34,10 @@ class CaptionConfig(OFAConfig):
         default=None,
         metadata={"help": "diff vqa data"},
     )
+    auxiliary_csv_path: Optional[str] = field(
+        default="/data/geraugi/plural/pre_processed_data/compact_context_w_ref_id.csv",
+        metadata={"help": "Auxiliary csv dataset file for diff vqa with disease context."},
+    )
     eval_bleu: bool = field(
         default=False, metadata={"help": "evaluation with BLEU scores"}
     )
@@ -101,7 +105,8 @@ class CaptionTask(OFATask):
             patch_image_size=self.cfg.patch_image_size,
             imagenet_default_mean_and_std=self.cfg.imagenet_default_mean_and_std,
             scst=getattr(self.cfg, 'scst', False),
-            diff_dataset=self.diff_dataset
+            diff_dataset=self.diff_dataset,
+            auxiliary_csv_path=self.cfg.auxiliary_csv_path
         )
 
     def build_model(self, cfg):

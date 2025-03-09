@@ -158,7 +158,7 @@ class OFATask(FairseqTask):
         return epoch_iter
 
     def build_model(self, cfg: FairseqDataclass):
-        model = super().build_model(cfg)
+        
         if self.cfg.bpe == 'bert':
             bpe_dict = {
                 "_name": "bert",
@@ -175,6 +175,21 @@ class OFATask(FairseqTask):
             }
             bpe_dict = DictConfig(bpe_dict)
             self.bpe = self.build_bpe(bpe_dict)
+        # WARNING: Mover to the end of the method to allow bpe to be accessed by the model
+        model = super().build_model(cfg)
+        freeze_main = True
+        if freeze_main == True:
+            # Freeze all parameters first
+            for name, param in model.named_parameters():
+                param.requires_grad = False
+        
+            # Then unfreeze the auxiliary network's weights
+            # Adjust the substring if necessary to match your module naming
+            keys_to_check = ["encoder.disease", "encoder.location", "encoder.severity"]
+            for name, param in model.named_parameters():
+                if any(key in name for key in keys_to_check):
+                    param.requires_grad = True
+                    print(f"Unfreezing {name}")
         return model
 
     def build_generator(
@@ -352,3 +367,7 @@ class OFATask(FairseqTask):
     def target_dictionary(self):
         """Return the target :class:`~fairseq.data.Dictionary`."""
         return self.tgt_dict
+    
+    @property
+    def get_bpe(self):
+        return self.bpe

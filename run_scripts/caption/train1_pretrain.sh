@@ -37,7 +37,8 @@ data=${data_dir}/mimic_diff_qa_s2_train.tsv,${data_dir}/mimic_diff_qa_s2_valid.t
 #checkpoint after impressions
 #restore_file=${checkpoints}/pretrain/3_0.06_200000_2025-01-08_09-24-40/checkpoint_best.pt 
 #checkpoint after first impressions and then findings
-restore_file=${checkpoints}/pretrain/3_0.06_200000_2025-01-08_22-22-20/checkpoint_best.pt 
+#restore_file=${checkpoints}/pretrain/3_0.06_200000_2025-01-08_22-22-20/checkpoint_best.pt
+restore_file=${checkpoints}/PLURAL.pt 
 selected_cols=0,1,2,3,4,5,6,7
 task=caption
 arch=ofa_base
@@ -55,14 +56,14 @@ dropout=0.1
 weight_decay=0.01
 
 attention_dropout=0.0
-max_src_length=100
+max_src_length=200 #FIX ME 100!!!!!!!!!!!
 max_tgt_length=100
 num_bins=1000
 patch_image_size=384
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
 drop_worst_ratio=0.2
 # FIXME: Check CUDA availability, master port
-for max_epoch in 3; do
+for max_epoch in 10; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in 0.06; do
     echo "warmup_ratio "${warmup_ratio}
@@ -72,7 +73,7 @@ for max_epoch in 3; do
       log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")".log"
       save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")
       mkdir -p $save_path
-      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ${plural}/train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ${plural}/train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \

@@ -1,5 +1,5 @@
 
-export MASTER_PORT=1062
+export MASTER_PORT=1063
 
 # Check if IN_SERAPH is set to 1
 if [ "$IN_SERAPH" -eq 1 ]; then
@@ -31,7 +31,7 @@ mkdir -p $log_dir $save_dir
 
 # Put the larger volume of data in 'data' and the smaller volume of data in 'diff_data'.
 # data=${data_dir}/2_samples/mimic_diff_qa_train_2024_11_22_13:01:12.tsv,${data_dir}/2_samples/mimic_diff_qa_valid_2024_11_22_13:01:12.tsv
-data=${data_dir}/1000_samples/mimic_diff_qa_s2_train.tsv,${data_dir}/1000_samples/mimic_diff_qa_s2_valid.tsv
+data=${data_dir}/100_samples/mimic_diff_qa_s2_train.tsv,${data_dir}/100_samples/mimic_diff_qa_s2_valid.tsv
 
 restore_file=${checkpoints}/PLURAL.pt # FIXME: UPDATE
 selected_cols=0,1,2,3,4,5,6,7
@@ -40,9 +40,9 @@ arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0
 lr=1e-4
-max_epoch=10 # 500
+max_epoch=8 # 500
 warmup_ratio=0 # 0.06
-batch_size=4
+batch_size=8
 update_freq=1
 resnet_drop_path_rate=0
 encoder_drop_path_rate=0
@@ -68,7 +68,7 @@ set -x
 ulimit -a
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
-CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ${plural}/train.py \
+CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=1 --master_port=${MASTER_PORT} ${plural}/train.py \
     $data \
     --selected-cols=${selected_cols} \
     --bpe-dir=${bpe_dir} \
@@ -120,7 +120,7 @@ CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=
     --patch-image-size=${patch_image_size} \
     --drop-worst-ratio=${drop_worst_ratio} \
     --drop-worst-after=${drop_worst_after} \
-    --num-workers=1 \
+    --num-workers=3 \
     --tensorboard-logdir=${tensorboard_logdir}
 echo "done"
 #    --fp16 \
