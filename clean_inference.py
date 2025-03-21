@@ -408,20 +408,20 @@ def main():
         repo_ws = f"{nas_path}/repos"
         plural_ws = f"{nas_path}/plural"
         inference_path = f"{plural_ws}/inference"
-        test_data_file = "mimic_diff_qa_s2_test.tsv"
-        test_data = f"{plural_ws}/pre_processed_data/{test_data_file}"
-        #test_data = f"{plural_ws}/pre_processed_data/2_samples/{test_data_file}" #FIXME
+        test_data_file = "mimic_diff_qa_test.tsv"
+        #test_data = f"{plural_ws}/pre_processed_data/{test_data_file}"
+        test_data = f"{plural_ws}/pre_processed_data/100_samples/{test_data_file}" #FIXME
         
-        #checkpoint_file = "PLURAL.pt"
-        #model_path = f"{plural_ws}/checkpoints/{checkpoint_file}"
+        checkpoint_file = "PLURAL.pt"
+        model_path = f"{plural_ws}/checkpoints/{checkpoint_file}"
         
         # checkpoint after full sequential training
-        checkpoint_file = "checkpoint_best.pt"
+        #checkpoint_file = "checkpoint_best.pt"
         #model_path = f"{plural_ws}/checkpoints/finetune/3_0.06_200000/{checkpoint_file}"
         
         # checkpoint before specific dvqa
         #checkpoint_file = "checkpoint_best.pt"
-        model_path = f"{plural_ws}/checkpoints/pretrain/3_0.06_200000_2025-01-09_09-21-55/{checkpoint_file}"
+        #model_path = f"{plural_ws}/checkpoints/pretrain/3_0.06_200000_2025-01-09_09-21-55/{checkpoint_file}"
         
     
     else:
@@ -433,7 +433,7 @@ def main():
         checkpoint_file = "PLURAL.pt"
         model_path = f"/home/polyaxon-data/data1/mimic/PLURAL/checkpoints/{checkpoint_file}"
     
-    just_score = True
+    just_score = False
 
     if just_score == True:
         # sequential general dvqa

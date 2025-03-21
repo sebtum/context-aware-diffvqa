@@ -1,5 +1,5 @@
 
-export MASTER_PORT=1063
+export MASTER_PORT=1068
 
 # Check if IN_SERAPH is set to 1
 if [ "$IN_SERAPH" -eq 1 ]; then
@@ -40,7 +40,7 @@ arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0
 lr=1e-4
-max_epoch=8 # 500
+max_epoch=3 # 500
 warmup_ratio=0 # 0.06
 batch_size=8
 update_freq=1
@@ -60,6 +60,7 @@ drop_worst_ratio=0
 drop_worst_after=0
 clip_norm=1000
 
+log_interval=10
 
 log_file=${log_dir}/$(date +"%Y-%m-%d_%H-%M-%S")_${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}".log"
 save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}
@@ -68,7 +69,7 @@ set -x
 ulimit -a
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
-CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=1 --master_port=${MASTER_PORT} ${plural}/train.py \
+CUDA_VISIBLE_DEVICES=0,1 python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=${MASTER_PORT} ${plural}/train.py \
     $data \
     --selected-cols=${selected_cols} \
     --bpe-dir=${bpe_dir} \
@@ -100,10 +101,11 @@ CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=1 --
     --lr=${lr} \
     --max-epoch=${max_epoch} \
     --log-format=simple \
-    --log-interval=10 \
+    --log-interval=${log_interval} \
     --fixed-validation-seed=7 \
     --no-epoch-checkpoints --keep-best-checkpoints=1 \
-    --save-interval=1 \
+    --save-interval=1 --validate-interval=1 \
+    --validate-interval-updates=0 \
     --eval-args='{"beam":5,"max_len_b":16,"no_repeat_ngram_size":3}' \
     --best-checkpoint-metric=loss \
     --max-src-length=${max_src_length} \
@@ -120,7 +122,7 @@ CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=1 --
     --patch-image-size=${patch_image_size} \
     --drop-worst-ratio=${drop_worst_ratio} \
     --drop-worst-after=${drop_worst_after} \
-    --num-workers=3 \
+    --num-workers=1 \
     --tensorboard-logdir=${tensorboard_logdir}
 echo "done"
 #    --fp16 \

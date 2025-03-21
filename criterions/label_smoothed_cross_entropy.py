@@ -70,7 +70,7 @@ class AdjustLabelSmoothedCrossEntropyCriterionConfig(FairseqDataclass):
         metadata={"help": "Weight for severity loss"},
     )
     gamma: float = field(
-        default=1.5,
+        default=1,
         metadata={"help": "Exponent of the focal loss, a bigger value reduces the contribution of easy samples."},
     )
 
@@ -165,7 +165,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         disease_weight = 1,
         location_weight = 1,
         severity_weight = 1,
-        gamma = 1.5
+        gamma = 1 # modify above not here
     ):
         super().__init__(task)
         self.sentence_avg = sentence_avg
@@ -190,6 +190,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
                 0.46, 0.46, 0.47, 0.48, 0.50, 0.51, 0.51, 0.53, 0.53, 0.54,
                 0.58, 0.60, 0.60, 0.61, 0.61, 0.62, 0.68, 0.73, 0.78, 0.91, 1.00
             ]
+        alpha = np.ones(31) ############################################ FIX ME###############
         self.register_buffer('alpha', torch.tensor(alpha))
 
         self.constraint_start = None
@@ -249,12 +250,12 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         aux_loss = self.disease_weight * disease_loss #+ self.location_weight * location_loss + self.severity_weight * severity_loss
         aux_sample_size = self.disease_weight * disease_samples #+ self.location_weight * location_samples + self.severity_weight * severity_samples
         
-        total_loss = loss + aux_loss
+        total_loss = 0.001*loss + aux_loss #!!!!!!!!!!!!!!!!!!FIX ME!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else ntokens
         )
-        total_sample_size = sample_size + aux_sample_size
+        total_sample_size = 0.001*sample_size + aux_sample_size #!!!!!!!!!!!!!!!!!!FIX ME!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         logging_output = {
             "loss": total_loss.data,
             "main_loss": loss.data,
@@ -274,7 +275,13 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             n_correct, total = self.compute_accuracy(model, net_output, sample)
             logging_output["n_correct"] = utils.item(n_correct.data)
             logging_output["total"] = utils.item(total.data)
-        return total_loss, total_sample_size, logging_output
+        if self.training:
+            dis_logits_1 = None
+
+        else:
+            dis_logits_1 = net_output[1]["disease_logits"][0]
+
+        return total_loss, total_sample_size, logging_output, dis_logits_1
 
     def compute_disease_loss(self, net_output, sample):
         
@@ -582,9 +589,11 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         metrics.log_scalar(
             "main_loss", main_loss_sum / sample_size, sample_size, round=3
         )
-        
         metrics.log_scalar(
             "disease_loss", disease_loss_sum / disease_samples, disease_samples, round=3
+        )
+        metrics.log_scalar(
+            "disease samples", disease_samples, 1, round=3
         )
         #metrics.log_scalar(
         #    "location_loss", location_loss_sum / location_samples, location_samples, round=3

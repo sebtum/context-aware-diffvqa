@@ -56,14 +56,19 @@ dropout=0.1
 weight_decay=0.01
 
 attention_dropout=0.0
-max_src_length=200 #FIX ME 100!!!!!!!!!!!
+max_src_length=100
 max_tgt_length=100
 num_bins=1000
 patch_image_size=384
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
 drop_worst_ratio=0.2
+
+save_interval_updates=20000
+validate_interval_updates=170
+log_interval=40
+
 # FIXME: Check CUDA availability, master port
-for max_epoch in 10; do
+for max_epoch in 6; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in 0.06; do
     echo "warmup_ratio "${warmup_ratio}
@@ -73,7 +78,7 @@ for max_epoch in 10; do
       log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")".log"
       save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")
       mkdir -p $save_path
-      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ${plural}/train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ${plural}/train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
@@ -100,14 +105,14 @@ for max_epoch in 10; do
           --dropout=${dropout} \
           --attention-dropout=${attention_dropout} \
           --weight-decay=${weight_decay} \
-          --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
+          --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=5.0 \
           --lr-scheduler=polynomial_decay --lr=${lr} \
           --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
-          --log-format=simple --log-interval=10 \
+          --log-format=simple --log-interval=${log_interval} \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
           --save-interval=1 --validate-interval=1 \
-          --save-interval-updates=200 --validate-interval-updates=100 \
+          --save-interval-updates=${save_interval_updates} --validate-interval-updates=${validate_interval_updates} \
           --eval-args='{"beam":5,"max_len_b":16,"no_repeat_ngram_size":3}' \
           --best-checkpoint-metric=loss \
           --max-src-length=${max_src_length} \
