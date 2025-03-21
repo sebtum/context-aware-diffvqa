@@ -482,6 +482,38 @@ def validate(
                     break
                 trainer.valid_step(sample)
 
+        # Compute aggregated metrics from trainer's torchmetrics objects
+        final_f1_p4 = trainer.valid_f1_p4.compute()
+        final_f1_p5 = trainer.valid_f1_p5.compute()
+        final_f1_p6 = trainer.valid_f1_p6.compute()
+        final_ap = trainer.valid_ap.compute()
+
+        # Move to CPU and convert to a list for easier handling (if needed)
+        final_f1_p4_list = final_f1_p4.cpu().tolist()
+        final_f1_p5_list = final_f1_p5.cpu().tolist()
+        final_f1_p6_list = final_f1_p6.cpu().tolist()
+        final_ap_list = final_ap.cpu().tolist()
+        final_f1_list = [final_f1_p4_list, final_f1_p5_list, final_f1_p6_list]
+        threshold = 0.3
+        for f1_list in final_f1_list:
+            try:
+                for idx, f1 in enumerate(f1_list):
+                    logger.info(f"Validation F1 threshold {threshold} for disease {idx}: {f1:.4f}")
+                macro_f1 = sum(f1_list) / len(f1_list)
+                logger.info(f"Validation Macro F1 threshold {threshold} Score: {macro_f1:.4f}")
+            except TypeError:
+                # If a TypeError occurs (e.g., because one variable is not iterable), print directly.
+                logger.info(f"Validation F1 threshold {threshold}: {f1_list}")
+            threshold = threshold + 0.1
+            
+        try:
+            for idx, ap in enumerate(final_ap_list):
+                logger.info(f"Validation Average Precision for disease {idx}: {ap:.4f}")
+            macro_ap = sum(final_ap_list) / len(final_ap_list)
+            logger.info(f"Validation Macro Average Precision: {macro_ap:.4f}")
+        except:
+            logger.info(f"Validation Average Precision: {final_ap_list}")
+
         # log validation stats
         if hasattr(task, 'get_valid_stats'):
             stats = task.get_valid_stats(cfg, trainer, agg.get_smoothed_values())
@@ -489,6 +521,18 @@ def validate(
             stats = agg.get_smoothed_values()
         stats = get_valid_stats(cfg, trainer, stats)
 
+        # Optionally, add these to stats and reset for next validation
+        stats = agg.get_smoothed_values()
+        if 'macro_f1' in locals():
+            stats['valid_macro_f1'] = macro_f1
+        if 'macro_ap' in locals():
+            stats['valid_macro_avg_precision'] = macro_ap
+
+        trainer.valid_f1_p4.reset()
+        trainer.valid_f1_p5.reset()
+        trainer.valid_f1_p6.reset()
+        trainer.valid_ap.reset()
+        
         if hasattr(task, "post_validate"):
             task.post_validate(trainer.get_model(), stats, agg)
 

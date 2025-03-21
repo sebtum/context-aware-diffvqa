@@ -29,6 +29,8 @@ from omegaconf import OmegaConf
 
 from utils import checkpoint_utils
 
+from torchmetrics.classification import MultilabelF1Score, AveragePrecision
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,6 +162,11 @@ class Trainer(object):
         else:
             self.cuda_env = None
             self.cuda_env_arr = None
+
+        self.valid_f1_p4 = MultilabelF1Score(num_labels=31, threshold=0.3, average=None, dist_sync_on_step=True, compute_on_cpu=False)
+        self.valid_f1_p5 = MultilabelF1Score(num_labels=31, threshold=0.4, average=None, dist_sync_on_step=True, compute_on_cpu=False)
+        self.valid_f1_p6 = MultilabelF1Score(num_labels=31, threshold=0.5, average=None, dist_sync_on_step=True, compute_on_cpu=False)
+        self.valid_ap = AveragePrecision(num_labels=31, average=None, dist_sync_on_step=True, compute_on_cpu=False)
 
         metrics.log_start_time("wall", priority=790, round=0)
 
@@ -1059,7 +1066,7 @@ class Trainer(object):
             sample, is_dummy_batch = self._prepare_sample(sample)
 
             try:
-                _loss, sample_size, logging_output = self.task.valid_step(
+                _loss, sample_size, logging_output, dis_logits_1 = self.task.valid_step(
                     sample, self.model, self.criterion, **extra_kwargs
                 )
             except RuntimeError as e:
@@ -1076,6 +1083,22 @@ class Trainer(object):
                             torch.cuda.empty_cache()
                         return self.valid_step(sample, raise_oom=True)
                 raise e
+            
+            # Update of f1 score and average precision for diseases
+            preds = torch.sigmoid(dis_logits_1)
+            device = preds.device  # e.g. cuda:1
+            self.valid_f1_p4 = self.valid_f1_p4.to(device)
+            self.valid_f1_p5 = self.valid_f1_p5.to(device)
+            self.valid_f1_p6 = self.valid_f1_p6.to(device)
+            self.valid_ap = self.valid_ap.to(device)
+            dis_targets_1 = sample["net_input"]["disease_tensor_gt"]
+            # Ensure targets are on the same device as preds:
+            dis_targets_1 = dis_targets_1.to(device)
+
+            self.valid_f1_p4.update(preds, dis_targets_1)
+            self.valid_f1_p5.update(preds, dis_targets_1)
+            self.valid_f1_p6.update(preds, dis_targets_1)
+            self.valid_ap.update(preds, dis_targets_1)
 
             logging_outputs = [logging_output]
             if is_dummy_batch:

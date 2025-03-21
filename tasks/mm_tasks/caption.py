@@ -192,7 +192,7 @@ class CaptionTask(OFATask):
         return scores
 
     def valid_step(self, sample, model, criterion):
-        loss, sample_size, logging_output = criterion(model, sample)
+        loss, sample_size, logging_output, dis_logits_1= criterion(model, sample)
 
         # model.eval()
 
@@ -232,7 +232,7 @@ class CaptionTask(OFATask):
         # logging_output["F1_radgraph"] = scores
 
 
-        return loss, sample_size, logging_output
+        return loss, sample_size, logging_output, dis_logits_1
 
     def reduce_metrics(self, logging_outputs, criterion):
         super().reduce_metrics(logging_outputs, criterion)
