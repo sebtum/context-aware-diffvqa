@@ -19,6 +19,8 @@ import sys
 import logging
 import psutil
 import threading
+import pandas as pd
+import ast
 
 # Constants
 MEAN = [0.5, 0.5, 0.5]
@@ -67,6 +69,64 @@ class PLURALInference:
         csv.field_size_limit(21 * 1024 * 1024)  # 21 MB limit (approx 20 million characters)
         self.logger.info(f"PLURALInference initialized with batch size={self.batch_size} and num_workers={self.num_workers}")
         self.logger.info(f"CSV field size limit set to: {csv.field_size_limit()}")
+        auxiliary_csv_path = "/data/geraugi/plural/pre_processed_data/compact_context_w_ref_id.csv"
+        if auxiliary_csv_path is not None:
+            aux_df = pd.read_csv(auxiliary_csv_path)
+
+            # Convert string representations of list columns to actual lists.
+            columns_to_convert = ['disease_vector']
+            for col in columns_to_convert:
+                aux_df[col] = aux_df[col].apply(ast.literal_eval)
+
+            # Get disease frequencies, sorted in descending order (most frequent first)
+            disease_freq = aux_df['disease'].dropna().value_counts()
+
+            # unique_diseases now is a list of diseases ordered by frequency
+            unique_diseases = list(disease_freq.index)
+
+            # Build the mapping from disease to index
+            self.disease_to_index = {disease: idx for idx, disease in enumerate(unique_diseases)}
+
+            # Group rows by dicom_id so that images with multiple disease entries are combined.
+            grouped = aux_df.groupby("dicom_id")
+
+            auxiliary_dict = {}
+            for dicom_id, group in grouped:
+                # For the disease vector, simply take it from the first row.
+                disease_vector = np.array(group.iloc[0]['disease_vector'], dtype=np.float32)
+
+                # Mask for getting the information from the reference image
+                ref_id_mask = group.iloc[0]["ref_id_mask"]
+
+                # Extract the reference DICOM ID from the first row.
+                ref_dicom_id = group.iloc[0]["ref_dicom_id"]
+                disease_present = 1
+
+                # Update the matrices for each disease entry in this group.
+                for _, row in group.iterrows():
+                    # Skip rows where disease label is missing.
+                    if pd.isna(row["disease"]):
+                        disease_present = 0
+                        continue
+                    disease_label = row["disease"]
+                    if disease_label not in self.disease_to_index:
+                        print(f"CaptionDataset init method: Non existing label {disease_label} " 
+                              f"for auxiliary dataset {auxiliary_csv_path}")
+                        continue  # Defensive check
+
+                auxiliary_dict[dicom_id] = {
+                    "disease_vector_gt": disease_vector,  # shape: [disease_vector_dim]
+                    "disease_present": disease_present,
+                    "ref_dicom_id": ref_dicom_id,         # identifier string of reference image
+                    "ref_id_mask": ref_id_mask      # 1 for cases ref_dicom_id info should be accessed 
+                }                                   # by pointing to dicom_ids with -1 on ref_id_mask
+                                                    # -1 for those additional entries  
+                                                    # 0 for nothing special
+                #print(f"{dicom_id}:\nLoc matrix: {loc_matrix}\nSev matrix:{sev_matrix}"
+                #      f"\nDisease vector: {disease_vector}\nDisease present:{disease_present}"
+                #      f"ref dicom: {ref_dicom_id}\nref mask: {ref_id_mask}")
+
+            self.auxiliary_dict = auxiliary_dict
     
     def log_memory_usage(self, tag=""):
         """Log memory usage of the current process."""
@@ -125,6 +185,7 @@ class PLURALInference:
                 for line in reader:
                     line_count += 1
                     yield {
+                        "id": line[0],
                         "image": line[1],
                         "gt": line[2],
                         "question": line[3],
@@ -164,11 +225,29 @@ class PLURALInference:
                         "patch_masks": torch.tensor([True]),
                     }
                 }
-
+                # Add auxiliary data for the main image using uniq_id as key.
+                uniq_id = item["id"]
+                aux_main = self.auxiliary_dict.get(uniq_id)
+                if aux_main is not None:
+                    # Use the precomputed disease vector (a vector) and the ground truth matrices.
+                    sample["net_input"]["disease_tensor_gt"] = torch.tensor(aux_main["disease_vector_gt"])
+                    #sample["net_input"]["disease_present"] =torch.tensor(aux_main["disease_present"])
+                else:
+                    # If there's no auxiliary data for this image, default to all 0s (implicitly no disease).
+                    print(f"CaptionDataset: process_data: There is no auxiliary data for {uniq_id}")
+                    sample["net_input"]["disease_tensor_gt"] = None
+                    #sample["net_input"]["disease_present"] = None
                 if item.get("prev_image"):
                     image2 = Image.open(BytesIO(base64.urlsafe_b64decode(item["prev_image"])))
                     sample["net_input"]["patch_images_2"] = patch_resize_transform(image2).unsqueeze(0)
                     image2.close()
+                    if aux_main is not None:
+                        ref_dicom_id = aux_main["ref_dicom_id"]
+                        aux_ref = self.auxiliary_dict.get(ref_dicom_id)
+                        if aux_ref is not None:
+                            sample["net_input"]["disease_tensor_gt_2"] = torch.tensor(aux_ref["disease_vector_gt"])
+                            #sample["net_input"]["ref_id_mask"] = torch.tensor(aux_ref["ref_id_mask"])
+                            #sample["net_input"]["disease_present_2"] =torch.tensor(aux_ref["disease_present"])
                 #self.logger.debug(f"Sample: {sample}")
                 samples.append(sample)
                 gts.append(item["gt"])
@@ -187,14 +266,14 @@ class PLURALInference:
 
     # Encode text for the model
     def encode_text(self, text, append_bos=False, append_eos=False):
-        line = [
-            self.task.bpe.encode(f' {word.strip()}')
-            if not word.startswith('<code_') and not word.startswith('<bin_') else word
-            for word in text.strip().split()
-        ]
-        line = ' '.join(line)
+        #line = [
+        #    self.task.bpe.encode(f' {word.strip()}')
+        #    if not word.startswith('<code_') and not word.startswith('<bin_') else word
+        #    for word in text.strip().split()
+        #]
+        #line = ' '.join(line)
         s = self.task.tgt_dict.encode_line(
-            line=line,
+            line=self.task.bpe.encode(text),#line=line,
             add_if_not_exist=False,
             append_eos=False
         ).long()
@@ -202,7 +281,6 @@ class PLURALInference:
             s = torch.cat([torch.LongTensor([self.task.src_dict.bos()]), s])
         if append_eos:
             s = torch.cat([s, torch.LongTensor([self.task.src_dict.eos()])])
-        del line
         return s
     
         # Process a single batch
@@ -408,20 +486,20 @@ def main():
         repo_ws = f"{nas_path}/repos"
         plural_ws = f"{nas_path}/plural"
         inference_path = f"{plural_ws}/inference"
-        test_data_file = "mimic_diff_qa_test.tsv"
-        #test_data = f"{plural_ws}/pre_processed_data/{test_data_file}"
-        test_data = f"{plural_ws}/pre_processed_data/100_samples/{test_data_file}" #FIXME
+        test_data_file = "mimic_diff_qa_s2_test.tsv"
+        test_data = f"{plural_ws}/pre_processed_data/{test_data_file}"
+        #test_data = f"{plural_ws}/pre_processed_data/1000_samples/{test_data_file}" #FIXME
         
-        checkpoint_file = "PLURAL.pt"
-        model_path = f"{plural_ws}/checkpoints/{checkpoint_file}"
+        #checkpoint_file = "PLURAL.pt"
+        #model_path = f"{plural_ws}/checkpoints/{checkpoint_file}"
         
         # checkpoint after full sequential training
         #checkpoint_file = "checkpoint_best.pt"
         #model_path = f"{plural_ws}/checkpoints/finetune/3_0.06_200000/{checkpoint_file}"
         
         # checkpoint before specific dvqa
-        #checkpoint_file = "checkpoint_best.pt"
-        #model_path = f"{plural_ws}/checkpoints/pretrain/3_0.06_200000_2025-01-09_09-21-55/{checkpoint_file}"
+        checkpoint_file = "checkpoint_best.pt"
+        model_path = f"{plural_ws}/checkpoints/pretrain/6_0.06_200000_2025-03-23_06-42-00/{checkpoint_file}"
         
     
     else:
@@ -429,7 +507,7 @@ def main():
         workspace = "/home/guests/sebastian_sotela"
         inference_path = f"{workspace}/logs/reportgen/inference"
         test_data_file = "mimic_diff_qa_s2_test.tsv"
-        test_data = f"{workspace}/data_pre_runs/tsv_output_data/100_samples/{test_data_file}" #FIXME
+        test_data = f"{workspace}/data_pre_runs/tsv_output_data/10_samples/{test_data_file}" #FIXME
         checkpoint_file = "PLURAL.pt"
         model_path = f"/home/polyaxon-data/data1/mimic/PLURAL/checkpoints/{checkpoint_file}"
     

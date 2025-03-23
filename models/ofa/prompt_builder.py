@@ -40,15 +40,22 @@ class PromptBuilder(nn.Module):
         # Use the device of src_tokens for everything.
         device = src_tokens.device
         pad_idx = self.dictionary.pad()
-        B = disease_main.shape[0]
-
+        if disease_main.dim() > 1:
+            B = disease_main.shape[0]
+        else: 
+            B = 1
         prompt_tokens_list = []
+        
         #print(f'bos tokens: {self.bos_tokens}\neos tokens: {self.eos_tokens}')
         for i in range(B):
             # Compute the disease difference per sample.
-            disease_diff = disease_main[i] - disease_ref[i]
+            if B == 1:
+                disease_diff = disease_main - disease_ref
+            else:
+                disease_diff = disease_main[i] - disease_ref[i]
             additional_words = []
             missing_words = []
+            
             for j in range(disease_diff.shape[0]):
                 val = disease_diff[j].item()
                 if val == 1:
