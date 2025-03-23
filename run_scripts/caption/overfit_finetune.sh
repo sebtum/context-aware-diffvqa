@@ -31,7 +31,7 @@ mkdir -p $log_dir $save_dir
 
 # Put the larger volume of data in 'data' and the smaller volume of data in 'diff_data'.
 # data=${data_dir}/2_samples/mimic_diff_qa_train_2024_11_22_13:01:12.tsv,${data_dir}/2_samples/mimic_diff_qa_valid_2024_11_22_13:01:12.tsv
-data=${data_dir}/100_samples/mimic_diff_qa_s2_train.tsv,${data_dir}/100_samples/mimic_diff_qa_s2_valid.tsv
+data=${data_dir}/1000_samples/mimic_diff_qa_s2_train.tsv,${data_dir}/1000_samples/mimic_diff_qa_s2_valid.tsv
 
 restore_file=${checkpoints}/PLURAL.pt # FIXME: UPDATE
 selected_cols=0,1,2,3,4,5,6,7
@@ -40,10 +40,10 @@ arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0
 lr=1e-4
-max_epoch=3 # 500
+max_epoch=4 # 500
 warmup_ratio=0 # 0.06
 batch_size=8
-update_freq=1
+update_freq=2
 resnet_drop_path_rate=0
 encoder_drop_path_rate=0
 decoder_drop_path_rate=0
@@ -69,7 +69,7 @@ set -x
 ulimit -a
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
-CUDA_VISIBLE_DEVICES=0,1 python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=${MASTER_PORT} ${plural}/train.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ${plural}/train.py \
     $data \
     --selected-cols=${selected_cols} \
     --bpe-dir=${bpe_dir} \

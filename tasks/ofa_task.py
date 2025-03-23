@@ -177,7 +177,7 @@ class OFATask(FairseqTask):
             self.bpe = self.build_bpe(bpe_dict)
         # WARNING: Mover to the end of the method to allow bpe to be accessed by the model
         model = super().build_model(cfg)
-        freeze_main = True
+        freeze_main = False
         if freeze_main == True:
             # Freeze all parameters first
             for name, param in model.named_parameters():
@@ -185,7 +185,7 @@ class OFATask(FairseqTask):
         
             # Then unfreeze the auxiliary network's weights
             # Adjust the substring if necessary to match your module naming
-            keys_to_check = ["encoder.disease", "encoder.location", "encoder.severity"]
+            keys_to_check = [] ###################################################### FIX ME: Choose which layers to unfreeze
             for name, param in model.named_parameters():
                 if any(key in name for key in keys_to_check):
                     param.requires_grad = True

@@ -36,7 +36,6 @@ from .unify_transformer_layer import TransformerEncoderLayer, TransformerDecoder
 from .resnet import ResNet
 from .frozen_bn import FrozenBatchNorm2d
 from .vit import VisionTransformer
-from .disease_classifier import DiseaseClassifier, LocationClassifier, SeverityOrdinalClassifier
 from .prompt_builder import PromptBuilder
 
 
@@ -510,17 +509,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             src_lengths=src_lengths,
             return_all_hiddens=return_all_hiddens,
         )
-        # Encoder auxiliary branch output
-        keys_to_add = [ "disease_logits",
-                        "disease_logits_2",
-                        "location_logits",
-                        "location_logits_2",
-                        "severity_logits",
-                        "severity_logits_2"
-                        ]
 
-        # Extract key-value pairs from source_dict and update dest_dict
-        dec_out_dict.update({k: encoder_out[k] for k in keys_to_add if k in encoder_out and encoder_out[k]})
         decoder_out = x , dec_out_dict
         
         return decoder_out
@@ -718,39 +707,6 @@ class TransformerEncoder(FairseqEncoder):
         self.register_buffer("image_rp_bucket", image_rp_bucket)
         self.entangle_position_embedding = args.entangle_position_embedding
 
-        num_diseases = 31
-        img_feature_dim = 1024
-        num_locations = 10
-        num_severity = 5
-        self.disease_classifier = DiseaseClassifier(
-            num_diseases=num_diseases, #args.num_diseases,       # This should be set via command-line args
-            in_channels=1024,                     # As ResNet101 outputs 1024 channels
-            pooling='attn', #args.disease_pooling,         # 'attn' or 'avg'
-            classifier_type='mlp', #args.disease_classifier_type,  # 'linear' or 'mlp'
-            dropout_prob=0.5, #args.disease_dropout_prob,
-            attn_hidden_dim=128, #args.disease_attn_hidden_dim,
-            mlp_hidden_dim=256, #args.disease_mlp_hidden_dim,
-            activation='relu', #args.disease_activation,
-            use_spectral_norm=False #args.disease_use_spectral_norm
-        )
-        self.location_classifier = LocationClassifier(
-            img_dim=img_feature_dim,
-            disease_emb_dim=128,
-            attn_dim=256,
-            hidden_dim=512,
-            location_dim=num_locations,
-            num_diseases=num_diseases
-        )
-
-        self.severity_classifier = SeverityOrdinalClassifier(
-            img_dim=img_feature_dim, 
-            disease_emb_dim=256, 
-            attn_dim=128, 
-            hidden_dim=256, 
-            severity_dim=num_severity, 
-            num_diseases=num_diseases
-        )
-
         self.prompt_builder = PromptBuilder(
             dictionary=dictionary,
             task_bpe=task_bpe
@@ -812,7 +768,7 @@ class TransformerEncoder(FairseqEncoder):
             patch_images.size(0), image_num_patches)
 
         image_embed = image_embed.flatten(2).transpose(1, 2)
-        flattened_img_features = image_embed.clone()
+        
         if sample_patch_num is not None:
             patch_orders = [
                 random.sample(range(image_num_patches), k=sample_patch_num)
@@ -848,7 +804,7 @@ class TransformerEncoder(FairseqEncoder):
         else:
             image_pos_embed = self.embed_image_positions(image_position_ids)
 
-        return image_embed, image_num_patches, image_padding_mask, image_position_ids, image_pos_embed, flattened_img_features
+        return image_embed, image_num_patches, image_padding_mask, image_position_ids, image_pos_embed
 
     def get_encoder_prompt(self, prompt_tokens):
         past_key_values = self.encoder_prompt_encoder(prompt_tokens)
@@ -934,11 +890,7 @@ class TransformerEncoder(FairseqEncoder):
         token_embeddings: Optional[torch.Tensor] = None,
         sample_patch_num: Optional[int] = None,
         disease_tensor_gt: Optional[torch.Tensor] = None,
-        location_tensor_gt: Optional[torch.Tensor] = None,
-        severity_tensor_gt: Optional[torch.Tensor] = None,
         disease_tensor_gt_2: Optional[torch.Tensor] = None,
-        location_tensor_gt_2: Optional[torch.Tensor] = None,
-        severity_tensor_gt_2: Optional[torch.Tensor] = None,
     ):
         """
         Args:
@@ -972,11 +924,7 @@ class TransformerEncoder(FairseqEncoder):
                                        token_embeddings,
                                        sample_patch_num,
                                        disease_tensor_gt,
-                                       location_tensor_gt,
-                                       severity_tensor_gt,
                                        disease_tensor_gt_2,
-                                       location_tensor_gt_2,
-                                       severity_tensor_gt_2,
                                        )
 
     # TorchScript doesn't support super() method so that the scriptable Subclass
@@ -994,11 +942,7 @@ class TransformerEncoder(FairseqEncoder):
         token_embeddings: Optional[torch.Tensor] = None,
         sample_patch_num: Optional[int] = None,
         disease_tensor_gt: Optional[torch.Tensor] = None,
-        location_tensor_gt: Optional[torch.Tensor] = None,
-        severity_tensor_gt: Optional[torch.Tensor] = None,
         disease_tensor_gt_2: Optional[torch.Tensor] = None,
-        location_tensor_gt_2: Optional[torch.Tensor] = None,
-        severity_tensor_gt_2: Optional[torch.Tensor] = None,
     ):
         """
         Args:
@@ -1041,44 +985,28 @@ class TransformerEncoder(FairseqEncoder):
         image_pos_embed = None
         image_pos_embed_2 = None
         if patch_images is not None:
-            image_embed, image_num_patches, image_padding_mask, image_position_ids, image_pos_embed, flattened_img_features = \
+            image_embed, image_num_patches, image_padding_mask, image_position_ids, image_pos_embed = \
                 self.get_patch_images_info(patch_images, sample_patch_num, src_tokens.device)
             image_padding_mask[~patch_masks] = True
-            
-            disease_logits = self.disease_classifier(flattened_img_features)
-            if self.training == True:
-                # Option 1: Use gold disease labels (training).
-                location_logits = self.location_classifier(flattened_img_features, gold_disease_labels=disease_tensor_gt)
-                severity_logits = self.severity_classifier(flattened_img_features, gold_disease_labels=disease_tensor_gt)
-            else:
-                # Option 2: Use disease logits (inference).
-                location_logits = self.location_classifier(flattened_img_features, disease_logits=disease_logits)
-                severity_logits = self.severity_classifier(flattened_img_features, disease_logits=disease_logits)
 
         if patch_images_2 is not None:
-            image_embed_2, image_num_patches_2, image_padding_mask_2, image_position_ids_2, image_pos_embed_2, flattened_img_features_2= \
+            image_embed_2, image_num_patches_2, image_padding_mask_2, image_position_ids_2, image_pos_embed_2= \
                 self.get_patch_images_info(patch_images_2, sample_patch_num, src_tokens.device)
             image_padding_mask_2[~patch_masks] = True
-
-            disease_logits_2 = self.disease_classifier(flattened_img_features_2)
-            if self.training == True:
-                # Option 1: Use gold disease labels (training).
-                location_logits_2 = self.location_classifier(flattened_img_features_2, gold_disease_labels=disease_tensor_gt_2)
-                severity_logits_2 = self.severity_classifier(flattened_img_features_2, gold_disease_labels=disease_tensor_gt_2)
-            else:
-                # Option 2: Use disease logits (inference).
-                location_logits_2 = self.location_classifier(flattened_img_features_2, disease_logits=disease_logits_2)
-                severity_logits_2 = self.severity_classifier(flattened_img_features_2, disease_logits=disease_logits_2)
                 
-        #src_tokens_w_context = src_tokens 
-        src_tokens_w_context = self.prompt_builder.build_and_prepend_context(
-            disease_logits, disease_logits_2,
-            location_logits, location_logits_2,
-            severity_logits, severity_logits_2,
-            disease_tensor_gt, disease_tensor_gt_2,
-            location_tensor_gt, location_tensor_gt_2,
-            severity_tensor_gt, severity_tensor_gt_2,
-            src_tokens
+        #src_tokens_w_context = src_tokens
+        if self.training ==True: 
+            src_tokens_w_context = self.prompt_builder.build_and_prepend_context(
+                disease_tensor_gt, disease_tensor_gt_2,
+                src_tokens
+            )
+        else:
+            # FIX ME: placeholder for the output from xplainer
+            disease_guess = disease_tensor_gt
+            disease_guess_2 = disease_tensor_gt_2
+            src_tokens_w_context = self.prompt_builder.build_and_prepend_context(
+                disease_guess, disease_guess_2,
+                src_tokens
             )
 
 
@@ -1181,12 +1109,6 @@ class TransformerEncoder(FairseqEncoder):
             "src_tokens": [],
             "src_lengths": [],
             "position_embeddings": [pos_embed],  # B x T x C
-            "disease_logits": [disease_logits], # B x num_diseases
-            "disease_logits_2": [disease_logits_2], # B x num_diseases
-            "location_logits": [location_logits], # B x num_diseases x num_locations
-            "location_logits_2": [location_logits_2], # B x num_diseases x num_locations
-            "severity_logits": [severity_logits], # B x num_diseases x num_severity
-            "severity_logits_2": [severity_logits_2], # B x num_diseases x num_severity
         }
 
     @torch.jit.export
@@ -1309,35 +1231,12 @@ class TransformerEncoder(FairseqEncoder):
             state_dict["encoder.embed_image_positions.weight"] = torch.cat(
                 [state_dict["encoder.embed_image_positions.weight"], new_pos_embed_to_add]
             )
-        # --- New Code: Integrate Disease Classifier Parameters ---
-        disease_prefix = prefix + "disease_classifier."
-        # Check if any key corresponding to the disease classifier exists
-        if not any(key.startswith(disease_prefix) for key in state_dict.keys()):
-            # Get the disease classifier state dict from the current model
-            disease_state = self.disease_classifier.state_dict()
-            for key, value in disease_state.items():
-                state_dict[disease_prefix + key] = value.clone()
-            print("Added disease_classifier parameters to state_dict.")
-            # --- End of New Code ---
-
-        # --- New Code: Integrate Location Classifier Parameters ---
-        location_prefix = prefix + "location_classifier."
-        if not any(key.startswith(location_prefix) for key in state_dict.keys()):
-            location_state = self.location_classifier.state_dict()
-            for key, value in location_state.items():
-                state_dict[location_prefix + key] = value.clone()
-            print("Added location_classifier parameters to state_dict.")
-        # --- End of New Code ---
-
-        # --- New Code: Integrate Severity Classifier Parameters ---
-        severity_prefix = prefix + "severity_classifier."
-        if not any(key.startswith(severity_prefix) for key in state_dict.keys()):
-            severity_state = self.severity_classifier.state_dict()
-            for key, value in severity_state.items():
-                state_dict[severity_prefix + key] = value.clone()
-            print("Added severity_classifier parameters to state_dict.")
-        # --- End of New Code ---
-        
+        # registering parameters for prompt builder
+        prefix = name + "." if name != "" else ""
+        for param_name, param_tensor in self.prompt_builder.state_dict().items():
+            key = prefix + "prompt_builder." + param_name
+            if key not in state_dict:
+                state_dict[key] = param_tensor
         return state_dict
 
 

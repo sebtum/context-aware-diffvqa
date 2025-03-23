@@ -84,8 +84,6 @@ def collate(samples, pad_idx, eos_idx, aux=True):
         # Define the auxiliary keys for the main image.
         aux_keys = [
             "disease_tensor_gt",
-            "location_tensor_gt",
-            "severity_tensor_gt",
             "disease_present",
         ]
         for key in aux_keys:
@@ -100,8 +98,6 @@ def collate(samples, pad_idx, eos_idx, aux=True):
         if patch_images_2 is not None:
             aux_keys_2 = [
                 "disease_tensor_gt_2",
-                "location_tensor_gt_2",
-                "severity_tensor_gt_2",
                 "ref_id_mask",
                 "disease_present_2",
             ]
@@ -168,17 +164,11 @@ class CaptionDataset(OFADataset):
         elif type(bpe).__name__ == 'BertBPE':
             self.prompt = "图片描述了什么内容?"
 
-        # Example constants – adjust these as needed:
-        num_diseases = 31
-        location_dim = 10   # e.g., 10 location logits per disease
-        severity_dim = 5    # e.g., 5 severity logits per disease
-        
-
         if auxiliary_csv_path is not None:
             aux_df = pd.read_csv(auxiliary_csv_path)
 
             # Convert string representations of list columns to actual lists.
-            columns_to_convert = ['severity_vector', 'location_vector', 'disease_vector']
+            columns_to_convert = ['disease_vector']
             for col in columns_to_convert:
                 aux_df[col] = aux_df[col].apply(ast.literal_eval)
 
@@ -196,10 +186,6 @@ class CaptionDataset(OFADataset):
 
             auxiliary_dict = {}
             for dicom_id, group in grouped:
-                # Initialize location and severity matrices with zeros.
-                loc_matrix = np.zeros((num_diseases, location_dim), dtype=np.float32)
-                sev_matrix = np.zeros((num_diseases, severity_dim), dtype=np.float32)
-
                 # For the disease vector, simply take it from the first row.
                 disease_vector = np.array(group.iloc[0]['disease_vector'], dtype=np.float32)
 
@@ -221,14 +207,8 @@ class CaptionDataset(OFADataset):
                         print(f"CaptionDataset init method: Non existing label {disease_label} " 
                               f"for auxiliary dataset {auxiliary_csv_path}")
                         continue  # Defensive check
-                    d_idx = self.disease_to_index[disease_label]
-                    # Fill in the corresponding row with the provided vectors.
-                    loc_matrix[d_idx] = np.array(row["location_vector"], dtype=np.float32)
-                    sev_matrix[d_idx] = np.array(row["severity_vector"], dtype=np.float32)
 
                 auxiliary_dict[dicom_id] = {
-                    "location_tensor_gt": loc_matrix,     # shape: [num_diseases, location_dim]
-                    "severity_tensor_gt": sev_matrix,     # shape: [num_diseases, severity_dim]
                     "disease_vector_gt": disease_vector,  # shape: [disease_vector_dim]
                     "disease_present": disease_present,
                     "ref_dicom_id": ref_dicom_id,         # identifier string of reference image
@@ -299,15 +279,11 @@ class CaptionDataset(OFADataset):
         if aux_main is not None:
             # Use the precomputed disease vector (a vector) and the ground truth matrices.
             example["disease_tensor_gt"] = torch.tensor(aux_main["disease_vector_gt"])
-            example["location_tensor_gt"] = torch.tensor(aux_main["location_tensor_gt"])
-            example["severity_tensor_gt"] = torch.tensor(aux_main["severity_tensor_gt"])
             example["disease_present"] =torch.tensor(aux_main["disease_present"])
         else:
             # If there's no auxiliary data for this image, default to all 0s (implicitly no disease).
             print(f"CaptionDataset: process_data: There is no auxiliary data for {uniq_id}")
             example["disease_tensor_gt"] = None
-            example["location_tensor_gt"] = None
-            example["severity_tensor_gt"] = None
             example["disease_present"] = None
 
         # Process the reference image if available.
@@ -321,8 +297,6 @@ class CaptionDataset(OFADataset):
                 aux_ref = self.auxiliary_dict.get(ref_dicom_id)
                 if aux_ref is not None:
                     example["disease_tensor_gt_2"] = torch.tensor(aux_ref["disease_vector_gt"])
-                    example["location_tensor_gt_2"] = torch.tensor(aux_ref["location_tensor_gt"])
-                    example["severity_tensor_gt_2"] = torch.tensor(aux_ref["severity_tensor_gt"])
                     example["ref_id_mask"] = torch.tensor(aux_ref["ref_id_mask"])
                     example["disease_present_2"] =torch.tensor(aux_ref["disease_present"])
                     #print(f"disease gt 2: {example['disease_tensor_gt_2']}")

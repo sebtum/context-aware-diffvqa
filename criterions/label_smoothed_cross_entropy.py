@@ -14,7 +14,6 @@ from fairseq import metrics, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 from omegaconf import II
-import torch.nn as nn
 
 
 @dataclass
@@ -56,22 +55,6 @@ class AdjustLabelSmoothedCrossEntropyCriterionConfig(FairseqDataclass):
     constraint_range: Optional[str] = field(
         default=None,
         metadata={"help": "constraint range"}
-    )
-    disease_weight: float = field(
-        default=1,
-        metadata={"help": "Weight for disease loss"},
-    )
-    location_weight: float = field(
-        default=1,
-        metadata={"help": "Weight for location loss"},
-    )
-    severity_weight: float = field(
-        default=1,
-        metadata={"help": "Weight for severity loss"},
-    )
-    gamma: float = field(
-        default=1,
-        metadata={"help": "Exponent of the focal loss, a bigger value reduces the contribution of easy samples."},
     )
 
 
@@ -161,11 +144,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         use_rdrop=False,
         reg_alpha=1.0,
         sample_patch_num=196,
-        constraint_range=None,
-        disease_weight = 1,
-        location_weight = 1,
-        severity_weight = 1,
-        gamma = 1 # modify above not here
+        constraint_range=None
     ):
         super().__init__(task)
         self.sentence_avg = sentence_avg
@@ -178,20 +157,6 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         self.use_rdrop = use_rdrop
         self.reg_alpha = reg_alpha
         self.sample_patch_num = sample_patch_num
-        # Convert the scalars to tensors and register them as buffers so they follow model device moves
-        self.register_buffer('disease_weight', torch.tensor(disease_weight))
-        self.register_buffer('location_weight', torch.tensor(location_weight))
-        self.register_buffer('severity_weight', torch.tensor(severity_weight))
-        self.register_buffer('gamma', torch.tensor(gamma))
-        # alpha follows normalize inverse frequency of the training data
-        # additionally it has undergone a power transformation
-        alpha = [
-                0.36, 0.37, 0.37, 0.39, 0.39, 0.41, 0.42, 0.43, 0.44, 0.45,
-                0.46, 0.46, 0.47, 0.48, 0.50, 0.51, 0.51, 0.53, 0.53, 0.54,
-                0.58, 0.60, 0.60, 0.61, 0.61, 0.62, 0.68, 0.73, 0.78, 0.91, 1.00
-            ]
-        alpha = np.ones(31) ############################################ FIX ME###############
-        self.register_buffer('alpha', torch.tensor(alpha))
 
         self.constraint_start = None
         self.constraint_end = None
@@ -238,272 +203,22 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         net_output = model(**sample["net_input"])
         loss, nll_loss, ntokens = self.compute_loss(model, net_output, sample, update_num, reduce=reduce)
 
-        self.gamma = self.gamma.to(loss.device)
-        self.disease_weight = self.disease_weight.to(loss.device)
-        self.location_weight = self.location_weight.to(loss.device)
-        self.severity_weight = self.disease_weight.to(loss.device)
-        # Compute auxiliary BCE loss
-        disease_loss, disease_samples = self.compute_disease_loss(net_output, sample)
-        #location_loss, location_samples = self.compute_location_loss(net_output, sample)
-        #severity_loss, severity_samples = self.compute_severity_loss(net_output, sample)
         
-        aux_loss = self.disease_weight * disease_loss #+ self.location_weight * location_loss + self.severity_weight * severity_loss
-        aux_sample_size = self.disease_weight * disease_samples #+ self.location_weight * location_samples + self.severity_weight * severity_samples
-        
-        total_loss = 0.001*loss + aux_loss #!!!!!!!!!!!!!!!!!!FIX ME!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else ntokens
         )
-        total_sample_size = 0.001*sample_size + aux_sample_size #!!!!!!!!!!!!!!!!!!FIX ME!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         logging_output = {
-            "loss": total_loss.data,
-            "main_loss": loss.data,
+            "loss": loss.data,
             "nll_loss": nll_loss.data,
             "ntokens": sample["ntokens"],
             "nsentences": sample["nsentences"],
             "sample_size": sample_size,
-            "disease_samples": disease_samples,
-        #    "location_samples": location_samples,
-        #    "severity_samples": severity_samples,
-            "disease_loss": disease_loss.data,
-        #    "location_loss": location_loss.data,
-        #    "severity_loss": severity_loss.data,
         }
-
         if self.report_accuracy:
             n_correct, total = self.compute_accuracy(model, net_output, sample)
             logging_output["n_correct"] = utils.item(n_correct.data)
             logging_output["total"] = utils.item(total.data)
-        if self.training:
-            dis_logits_1 = None
-
-        else:
-            dis_logits_1 = net_output[1]["disease_logits"][0]
-
-        return total_loss, total_sample_size, logging_output, dis_logits_1
-
-    def compute_disease_loss(self, net_output, sample):
-        
-        disease_logits_1 = net_output[1]["disease_logits"][0]
-        disease_targets_1 = sample["net_input"]["disease_tensor_gt"]
-        
-        if "disease_logits_2" in net_output[1]:
-            disease_logits_2 = net_output[1]["disease_logits_2"][0]
-        if "disease_tensor_gt_2" in sample["net_input"]:
-            disease_targets_2 = sample["net_input"]["disease_tensor_gt_2"]
-        if "ref_id_mask" in sample["net_input"]:
-            ref_id_mask = sample["net_input"]["ref_id_mask"]
-
-        self.alpha = self.alpha.view(1, disease_targets_1.shape[1]).to(disease_targets_1.device)  # Shape [1, num_diseases]
-
-        # BCEWithLogitsLoss without reduction to get per-element loss
-        loss_fn = nn.BCEWithLogitsLoss(reduction='none')
-
-        # Compute per-element loss for both sets; shape: [B, num_diseases]
-        loss_1 = loss_fn(disease_logits_1, disease_targets_1)
-        loss_2 = loss_fn(disease_logits_2, disease_targets_2) 
-
-        # Compute the probabilities from logits
-        probs_1 = torch.sigmoid(disease_logits_1)
-        probs_2 = torch.sigmoid(disease_logits_2)
-
-        # Compute p_t: for targets=1 use the probability, for targets=0 use (1 - probability)
-        p_t1 = disease_targets_1 * probs_1 + (1 - disease_targets_1) * (1 - probs_1)
-        p_t2 = disease_targets_2 * probs_2 + (1 - disease_targets_2) * (1 - probs_2)
-
-        # Compute the modulating factor: (1 - p_t)^gamma
-        modulating_factor1 = (1 - p_t1) ** self.gamma
-        modulating_factor2 = (1 - p_t2) ** self.gamma
-
-        # Compute the focal loss for each element
-        focal_loss_1 = self.alpha * modulating_factor1 * loss_1
-        focal_loss_2 = self.alpha * modulating_factor2 * loss_2
-
-        # Create a mask for valid samples in the second image:
-        # Valid sample => ref_id_mask == -1, so we get a 1 if valid, 0 if not.
-        mask_2 = (ref_id_mask == -1).float().unsqueeze(1)  # shape: [B, 1]
-
-        # Broadcast mask_2 to [B, num_diseases] and apply it.
-        focal_loss_2_masked = focal_loss_2 * mask_2
-        
-        # Compute total number of valid elements:
-        # For loss_1, every element is valid: B 
-        # For loss_2, only valid samples count
-        num_valid_loss1 = focal_loss_1.shape[0]  # B 
-        num_valid_loss2 = mask_2.sum()
-        valid_samples = num_valid_loss1 + num_valid_loss2
-
-        # Sum all the losses 
-        focal_loss = focal_loss_1.sum() + focal_loss_2_masked.sum()
-
-        return focal_loss, valid_samples
-
-    def compute_location_loss(self, net_output, sample):
-        """
-        Compute the loss for the location classifier.
-        """
-        
-        disease_present_1 = sample["net_input"]["disease_present"]
-        location_logits_1 = net_output[1]["location_logits"][0]
-        location_targets_1 = sample["net_input"]["location_tensor_gt"]
-
-        # Reshape alpha to match broadcasting across the num_diseases dimension
-        self.alpha = self.alpha.view(1, location_targets_1.shape[1], 1).to(location_targets_1.device)  # Shape [1, num_diseases, 1]
-        
-        if "location_logits_2" in net_output[1]:
-            location_logits_2 = net_output[1]["location_logits_2"][0]
-        if "location_tensor_gt_2" in sample["net_input"]:
-            location_targets_2 = sample["net_input"]["location_tensor_gt_2"]
-        if "ref_id_mask" in sample["net_input"]:
-            ref_id_mask = sample["net_input"]["ref_id_mask"]
-        if "disease_present_2" in sample["net_input"]:
-            disease_present_2 = sample["net_input"]["disease_present_2"]
-        
-        num_locations = location_targets_1.shape[2]
-        
-        loss_fn = nn.BCEWithLogitsLoss(reduction='none')
-        
-        # Compute raw per-element BCE loss.
-        # Shapes: [B, num_diseases, location_dim]
-        loss_1 = loss_fn(location_logits_1, location_targets_1)
-        loss_2 = loss_fn(location_logits_2, location_targets_2)
-
-        # Compute the probabilities from logits
-        probs_1 = torch.sigmoid(location_logits_1)
-        probs_2 = torch.sigmoid(location_logits_2)
-
-        # Compute p_t: for targets=1 use the probability, for targets=0 use (1 - probability)
-        p_t1 = location_targets_1 * probs_1 + (1 - location_targets_1) * (1 - probs_1)
-        p_t2 = location_targets_2 * probs_2 + (1 - location_targets_2) * (1 - probs_2)
-
-        # Compute the modulating factor: (1 - p_t)^gamma
-        modulating_factor1 = (1 - p_t1) ** self.gamma
-        modulating_factor2 = (1 - p_t2) ** self.gamma
-
-        # Compute the focal loss for each element
-        focal_loss_1 = self.alpha * modulating_factor1 * loss_1
-        focal_loss_2 = self.alpha * modulating_factor2 * loss_2
-        
-        # Create a mask for valid disease rows.
-        # We assume that if the first element of a disease row is -1, the entire row is invalid.
-        # These masks have shape [B, num_diseases]
-        valid_mask_1 = (location_targets_1[:, :, 0] != -1).float()
-        valid_mask_2 = (location_targets_2[:, :, 0] != -1).float()
-        
-        # Expand the masks along the location_dim so they can be applied elementwise.
-        # New shapes: [B, num_diseases, 1] (which will broadcast to location_dim)
-        valid_mask_1 = valid_mask_1.unsqueeze(-1)
-        valid_mask_2 = valid_mask_2.unsqueeze(-1)
-        
-        disease_mask_1 = (disease_present_1 == 1).float() # [B]
-        disease_mask_1 = disease_mask_1.unsqueeze(1).unsqueeze(2)  # shape becomes [B, 1, 1]
-
-        disease_mask_2 = (disease_present_2 == 1).float() # [B]
-        disease_mask_2 = disease_mask_2.unsqueeze(1).unsqueeze(2)  # shape becomes [B, 1, 1]
-
-        # For image 2, further zero out the loss for samples with ref_id_mask != -1.
-        # Here we treat each sample as a single valid unit regardless of the number of diseases.
-        sample_mask_2 = (ref_id_mask == -1).float().unsqueeze(1).unsqueeze(2)  # shape: [B,1,1]
-
-        # For each element in the loss, the valid mask is:
-        combined_mask_1 = valid_mask_1 * disease_mask_1  # shape [B, num_diseases, 1]
-        combined_mask_2 = valid_mask_2 * disease_mask_2 * sample_mask_2  # shape [B, num_diseases, 1]
-        loss_1_masked = focal_loss_1 * combined_mask_1
-        loss_2_masked = focal_loss_2 * combined_mask_2
-
-        loss = loss_1_masked.sum(dim=(0, 1, 2)) + loss_2_masked.sum(dim=(0, 1, 2))
-        
-        # Multiply by num_locations to count each location per valid row:
-        valid_count_image1 = (combined_mask_1.sum() * num_locations)
-        valid_count_image2 = (combined_mask_2.sum() * num_locations)
-        
-        total_valid_samples = valid_count_image1 + valid_count_image2
-        
-        return loss, total_valid_samples
-
-    def compute_severity_loss(self, net_output, sample):
-        """
-        Compute the loss for the severity classifier.
-        """
-
-        disease_present_1 = sample["net_input"]["disease_present"]
-        severity_logits_1 = net_output[1]["severity_logits"][0]
-        severity_targets_1 = sample["net_input"]["severity_tensor_gt"]
-
-        # Reshape alpha to match broadcasting across the num_diseases dimension
-        self.alpha = self.alpha.view(1, severity_targets_1.shape[1], 1).to(severity_targets_1.device)  # Shape [1, num_diseases, 1]
-        
-        if "severity_logits_2" in net_output[1]:
-            severity_logits_2 = net_output[1]["severity_logits_2"][0]
-        if "severity_tensor_gt_2" in sample["net_input"]:
-            severity_targets_2 = sample["net_input"]["severity_tensor_gt_2"]
-        if "ref_id_mask" in sample["net_input"]:
-            ref_id_mask = sample["net_input"]["ref_id_mask"]
-        if "disease_present_2" in sample["net_input"]:
-            disease_present_2 = sample["net_input"]["disease_present_2"]
-        
-        num_severity = severity_targets_1.shape[2]
-        
-        loss_fn = nn.BCEWithLogitsLoss(reduction='none')
-        
-        # Compute raw per-element BCE loss.
-        # Shapes: [B, num_diseases, severity_dim]
-        loss_1 = loss_fn(severity_logits_1, severity_targets_1)
-        loss_2 = loss_fn(severity_logits_2, severity_targets_2)
-
-        # Compute the probabilities from logits
-        probs_1 = torch.sigmoid(severity_logits_1)
-        probs_2 = torch.sigmoid(severity_logits_2)
-
-        # Compute p_t: for targets=1 use the probability, for targets=0 use (1 - probability)
-        p_t1 = severity_targets_1 * probs_1 + (1 - severity_targets_1) * (1 - probs_1)
-        p_t2 = severity_targets_2 * probs_2 + (1 - severity_targets_2) * (1 - probs_2)
-
-        # Compute the modulating factor: (1 - p_t)^gamma
-        modulating_factor1 = (1 - p_t1) ** self.gamma
-        modulating_factor2 = (1 - p_t2) ** self.gamma
-
-        # Compute the focal loss for each element
-        focal_loss_1 = self.alpha * modulating_factor1 * loss_1
-        focal_loss_2 = self.alpha * modulating_factor2 * loss_2
-        
-        # Create a mask for valid disease rows.
-        # We assume that if the first element of a disease row is -1, the entire row is invalid.
-        # These masks have shape [B, num_diseases]
-        valid_mask_1 = (severity_targets_1[:, :, 0] != -1).float()
-        valid_mask_2 = (severity_targets_2[:, :, 0] != -1).float()
-        
-        # Expand the masks along the severity_dim so they can be applied elementwise.
-        # New shapes: [B, num_diseases, 1] (which will broadcast to severity_dim)
-        valid_mask_1 = valid_mask_1.unsqueeze(-1)
-        valid_mask_2 = valid_mask_2.unsqueeze(-1)
-        
-        disease_mask_1 = (disease_present_1 == 1).float() # [B]
-        disease_mask_1 = disease_mask_1.unsqueeze(1).unsqueeze(2)  # shape becomes [B, 1, 1]
-
-        disease_mask_2 = (disease_present_2 == 1).float() # [B]
-        disease_mask_2 = disease_mask_2.unsqueeze(1).unsqueeze(2)  # shape becomes [B, 1, 1]
-
-        # For image 2, further zero out the loss for samples with ref_id_mask != -1.
-        # Here we treat each sample as a single valid unit regardless of the number of diseases.
-        sample_mask_2 = (ref_id_mask == -1).float().unsqueeze(1).unsqueeze(2)  # shape: [B,1,1]
-
-        # For each element in the loss, the valid mask is:
-        combined_mask_1 = valid_mask_1 * disease_mask_1  # shape [B, num_diseases, 1]
-        combined_mask_2 = valid_mask_2 * disease_mask_2 * sample_mask_2  # shape [B, num_diseases, 1]
-        loss_1_masked = focal_loss_1 * combined_mask_1
-        loss_2_masked = focal_loss_2 * combined_mask_2
-
-        loss = loss_1_masked.sum(dim=(0, 1, 2)) + loss_2_masked.sum(dim=(0, 1, 2))
-        
-        # Multiply by num_severity to count each severity per valid row:
-        valid_count_image1 = (combined_mask_1.sum() * num_severity)
-        valid_count_image2 = (combined_mask_2.sum() * num_severity)
-        
-        total_valid_samples = valid_count_image1 + valid_count_image2
-        
-        return loss, total_valid_samples
+        return loss, sample_size, logging_output
 
     def get_lprobs_and_target(self, model, net_output, sample):
         conf = sample['conf'][:, None, None] if 'conf' in sample and sample['conf'] is not None else 1
@@ -567,7 +282,6 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
     def reduce_metrics(cls, logging_outputs) -> None:
         """Aggregate logging outputs from data parallel training."""
         loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
-        main_loss_sum = sum(log.get("main_loss", 0) for log in logging_outputs)
         loss_sum_v1 = sum(log.get("loss_v1", 0) for log in logging_outputs)
         loss_sum_v2 = sum(log.get("loss_v2", 0) for log in logging_outputs)
         nll_loss_sum = sum(log.get("nll_loss", 0) for log in logging_outputs)
@@ -576,31 +290,10 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
         sample_size_v1 = sum(log.get("sample_size_v1", 0) for log in logging_outputs)
         sample_size_v2 = sum(log.get("sample_size_v2", 0) for log in logging_outputs)
-        disease_samples = sum(log.get("disease_samples", 0) for log in logging_outputs)
-        #location_samples = sum(log.get("location_samples", 0) for log in logging_outputs)
-        #severity_samples = sum(log.get("severity_samples", 0) for log in logging_outputs)
-        disease_loss_sum = sum(log.get("disease_loss", 0) for log in logging_outputs)
-        #location_loss_sum = sum(log.get("location_loss", 0) for log in logging_outputs)
-        #severity_loss_sum = sum(log.get("severity_loss", 0) for log in logging_outputs)
 
         metrics.log_scalar(
             "loss", loss_sum / sample_size, sample_size, round=3
         )
-        metrics.log_scalar(
-            "main_loss", main_loss_sum / sample_size, sample_size, round=3
-        )
-        metrics.log_scalar(
-            "disease_loss", disease_loss_sum / disease_samples, disease_samples, round=3
-        )
-        metrics.log_scalar(
-            "disease samples", disease_samples, 1, round=3
-        )
-        #metrics.log_scalar(
-        #    "location_loss", location_loss_sum / location_samples, location_samples, round=3
-        #)
-        #metrics.log_scalar(
-        #    "severity_loss", severity_loss_sum / severity_samples, severity_samples, round=3
-        #)
         metrics.log_scalar(
             "loss_v1", loss_sum_v1 / max(sample_size_v1, 1), max(sample_size_v1, 1), round=3
         )

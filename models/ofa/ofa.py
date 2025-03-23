@@ -83,11 +83,7 @@ class OFAModel(TransformerModel):
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
         disease_tensor_gt: Optional[torch.Tensor] = None,
-        location_tensor_gt: Optional[torch.Tensor] = None,
-        severity_tensor_gt: Optional[torch.Tensor] = None,
         disease_tensor_gt_2: Optional[torch.Tensor] = None,
-        location_tensor_gt_2: Optional[torch.Tensor] = None,
-        severity_tensor_gt_2: Optional[torch.Tensor] = None,
         ref_id_mask: Optional[torch.Tensor] = None,
         disease_present: Optional[torch.Tensor] = None,
         disease_present_2: Optional[torch.Tensor] = None,
@@ -105,11 +101,7 @@ class OFAModel(TransformerModel):
             return_all_hiddens=return_all_hiddens,
             sample_patch_num=sample_patch_num,
             disease_tensor_gt=disease_tensor_gt,
-            location_tensor_gt=location_tensor_gt,
-            severity_tensor_gt=severity_tensor_gt,
             disease_tensor_gt_2=disease_tensor_gt_2,
-            location_tensor_gt_2=location_tensor_gt_2,
-            severity_tensor_gt_2=severity_tensor_gt_2,
         )
         x, extra = self.decoder(
             prev_output_tokens,
@@ -122,17 +114,6 @@ class OFAModel(TransformerModel):
             return_all_hiddens=return_all_hiddens,
         )
         
-        # Encoder auxiliary branch output
-        keys_to_add = [ "disease_logits",
-                        "disease_logits_2",
-                        "location_logits",
-                        "location_logits_2",
-                        "severity_logits",
-                        "severity_logits_2"
-                        ]
-
-        # Extract key-value pairs from source_dict and update dest_dict
-        extra.update({k: encoder_out[k] for k in keys_to_add if k in encoder_out and encoder_out[k]})
         pad = self.encoder.padding_idx
         if classification_head_name is not None:
             prev_lengths = prev_output_tokens.ne(pad).sum(1)
