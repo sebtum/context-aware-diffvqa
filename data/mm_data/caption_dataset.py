@@ -81,6 +81,9 @@ def collate(samples, pad_idx, eos_idx, aux=True):
     device = src_tokens.device
     
     if aux:
+        # FIXME: This information is just to save image embeddings
+        net_input["dicom_ids"]= id
+        print(id)
         # Define the auxiliary keys for the main image.
         aux_keys = [
             "disease_tensor_gt",
@@ -137,6 +140,9 @@ class CaptionDataset(OFADataset):
         auxiliary_csv_path=None
     ):
         super().__init__(split, dataset, bpe, src_dict, tgt_dict)
+        ###########################################
+        use_xplainer_results = True  # Set to True to use xplainer results as ground truth for diseases
+        ###########################################
         self.max_src_length = max_src_length
         self.max_tgt_length = max_tgt_length
         self.patch_image_size = patch_image_size
@@ -164,6 +170,12 @@ class CaptionDataset(OFADataset):
         elif type(bpe).__name__ == 'BertBPE':
             self.prompt = "图片描述了什么内容?"
 
+        if use_xplainer_results:
+            xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv"
+            logger.info(f"WARNING: Using xplainer results as ground truth for diseases: {xplainer_csv}")
+            xp_predictions_df = pd.read_csv(xplainer_csv)
+            xp_predictions_df['disease_vector'] = xp_predictions_df[ 'disease_vector'].apply(ast.literal_eval)
+            xp_predictions_df = xp_predictions_df.set_index('dicom_id')
         if auxiliary_csv_path is not None:
             aux_df = pd.read_csv(auxiliary_csv_path)
 
@@ -180,14 +192,41 @@ class CaptionDataset(OFADataset):
 
             # Build the mapping from disease to index
             self.disease_to_index = {disease: idx for idx, disease in enumerate(unique_diseases)}
+            if use_xplainer_results:
+                # Use xplainer results
+                # get the disease columns in order, ignoring disease_vector and dicom_id
+                disease_columns = [col for col in xp_predictions_df.columns if col not in ['disease_vector', 'dicom_id']]
+                # Create a mapping from disease to index based on the xplainer results
+                self.disease_to_index = {disease.lower(): idx for idx, disease in enumerate(disease_columns)}
+
+            # FIXME: This is a hardcoded list of diseases. It is used to ignore the irrelevant diseases
+            # Warning: This list should match with the one on prompt_builder.py
+            reduced_disease_list = [
+                'atelectasis', 'pleural effusion', 'lung opacity', 'edema', 
+                'cardiomegaly', 'pneumonia', 'consolidation', 'pneumothorax', 
+                #'fracture', 'emphysema', 'pleural thickening', 'hernia',
+            ]
+            if use_xplainer_results:
+                # Filter the reduced disease list to only include those present in xplainer results
+                relevant_indices = [self.disease_to_index[disease] for disease in reduced_disease_list if disease in self.disease_to_index]
+            else:
+                # Get the indices of the relevant diseases
+                relevant_indices = [self.disease_to_index[disease] for disease in reduced_disease_list if disease in self.disease_to_index]
+                # Create a new mapping for the relevant diseases
+                self.disease_to_index = {disease: idx for idx, disease in enumerate(reduced_disease_list) if disease in self.disease_to_index}
 
             # Group rows by dicom_id so that images with multiple disease entries are combined.
             grouped = aux_df.groupby("dicom_id")
 
             auxiliary_dict = {}
             for dicom_id, group in grouped:
-                # For the disease vector, simply take it from the first row.
-                disease_vector = np.array(group.iloc[0]['disease_vector'], dtype=np.float32)
+                if use_xplainer_results:
+                    disease_vector = xp_predictions_df.at[dicom_id, 'disease_vector']
+                else:
+                    # For the disease vector, simply take it from the first row.
+                    disease_vector = np.array(group.iloc[0]['disease_vector'], dtype=np.float32)
+                # keep only the relevant diseases
+                disease_vector = np.array([disease_vector[i] for i in relevant_indices], dtype=np.float32)
 
                 # Mask for getting the information from the reference image
                 ref_id_mask = group.iloc[0]["ref_id_mask"]
@@ -203,7 +242,7 @@ class CaptionDataset(OFADataset):
                         disease_present = 0
                         continue
                     disease_label = row["disease"]
-                    if disease_label not in self.disease_to_index:
+                    if disease_label not in unique_diseases:
                         print(f"CaptionDataset init method: Non existing label {disease_label} " 
                               f"for auxiliary dataset {auxiliary_csv_path}")
                         continue  # Defensive check
