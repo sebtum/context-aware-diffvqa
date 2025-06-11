@@ -12,18 +12,22 @@ class PromptBuilder(nn.Module):
         self.register_buffer('eos_tokens', torch.LongTensor([self.dictionary.eos()]))
 
         # Pre-encode the vocabulary words:
+        #self.disease_vocab = [
+        #    'atelectasis', 'pleural effusion', 'lung opacity', 'edema', 
+        #    'cardiomegaly', 'pneumonia', 'consolidation', 'vascular congestion', 
+        #    'pneumothorax', 'infection', 'calcification', 'fracture', 'emphysema',
+        #    'enlargement of the cardiac silhouette', 'pleural thickening', 
+        #    'blunting of the costophrenic angle', 'hernia', 'scoliosis', 
+        #    'heart failure', 'granuloma', 'pneumomediastinum', 'air collection', 
+        #    'hilar congestion', 'hematoma', 'contusion', 'tortuosity of the thoracic aorta', 
+        #    'gastric distention', 'hypoxemia', 'tortuosity of the descending aorta', 
+        #    'hypertensive heart disease', 'thymoma'
+        #]
         self.disease_vocab = [
             'atelectasis', 'pleural effusion', 'lung opacity', 'edema', 
-            'cardiomegaly', 'pneumonia', 'consolidation', 'vascular congestion', 
-            'pneumothorax', 'infection', 'calcification', 'fracture', 'emphysema',
-            'enlargement of the cardiac silhouette', 'pleural thickening', 
-            'blunting of the costophrenic angle', 'hernia', 'scoliosis', 
-            'heart failure', 'granuloma', 'pneumomediastinum', 'air collection', 
-            'hilar congestion', 'hematoma', 'contusion', 'tortuosity of the thoracic aorta', 
-            'gastric distention', 'hypoxemia', 'tortuosity of the descending aorta', 
-            'hypertensive heart disease', 'thymoma'
+            'cardiomegaly', 'pneumonia', 'consolidation', 'pneumothorax', 
+            #'fracture', 'emphysema', 'pleural thickening', 'hernia', 
         ]
-    
         # Pre-encode each vocabulary word:
         self.pre_enc_disease = [
             self.dictionary.encode_line(line=self.task_bpe.encode(word),
@@ -81,10 +85,11 @@ class PromptBuilder(nn.Module):
                 missing_context_str = ""
             
             # If no changes, use the no-disease change string.
-            if not additional_words and not missing_words:
-                context_str = " there is no change in diseases"
-            else:
-                context_str = additional_context_str + missing_context_str
+            # FIXME: This lines are commented for the reduced disease case
+            #if not additional_words and not missing_words:
+            #    context_str = " there is no change in diseases"
+            #else:
+            context_str = additional_context_str + missing_context_str
             context_str += " the question is "
             #print(f'context str number {i}: {context_str}')
             # Encode the prompt context (only the context; the question is already encoded)
@@ -105,7 +110,7 @@ class PromptBuilder(nn.Module):
         
         final_encoded = data_utils.collate_tokens(prompt_tokens_list, pad_idx)
         # Debug: print the decoded prompt for inspection.
-        # self.decode_full_prompt(final_encoded.detach())
+        #self.decode_full_prompt(final_encoded.detach())
         return final_encoded
     
     def decode_full_prompt(self, final_encoded, escape_unk=False):
