@@ -21,6 +21,7 @@ import psutil
 import threading
 import pandas as pd
 import ast
+from tqdm import tqdm
 
 # Constants
 MEAN = [0.5, 0.5, 0.5]
@@ -48,7 +49,10 @@ def configure_logging():
 
 # Main Class for Model Evaluation
 class PLURALInference:
-    def __init__(self, workspace, test_data, model_path, inference_path, annotation_file, results_file, batch_size, num_workers, write_chunk_size):
+    def __init__(self, workspace, test_data, model_path, 
+                 inference_path, annotation_file, results_file, 
+                 batch_size, num_workers, write_chunk_size, 
+                 use_reduced_gt=True, use_xplainer_results=False):
         self.logger = logging.getLogger(__name__)
         self.workspace = workspace
         self.test_data = test_data
@@ -70,6 +74,12 @@ class PLURALInference:
         self.logger.info(f"PLURALInference initialized with batch size={self.batch_size} and num_workers={self.num_workers}")
         self.logger.info(f"CSV field size limit set to: {csv.field_size_limit()}")
         auxiliary_csv_path = "/data/geraugi/plural/pre_processed_data/compact_context_w_ref_id.csv"
+        if use_xplainer_results:
+            xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv"
+            self.logger.info(f"WARNING: Using xplainer results as ground truth for diseases: {xplainer_csv}")
+            xp_predictions_df = pd.read_csv(f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv")
+            xp_predictions_df['disease_vector'] = xp_predictions_df[ 'disease_vector'].apply(ast.literal_eval)
+            xp_predictions_df = xp_predictions_df.set_index('dicom_id')
         if auxiliary_csv_path is not None:
             aux_df = pd.read_csv(auxiliary_csv_path)
 
@@ -86,15 +96,45 @@ class PLURALInference:
 
             # Build the mapping from disease to index
             self.disease_to_index = {disease: idx for idx, disease in enumerate(unique_diseases)}
+            if use_xplainer_results:
+                # Use xplainer results
+                # get the disease columns in order, ignoring disease_vector and dicom_id
+                disease_columns = [col for col in xp_predictions_df.columns if col not in ['disease_vector', 'dicom_id']]
+                # Create a mapping from disease to index based on the xplainer results
+                self.disease_to_index = {disease.lower(): idx for idx, disease in enumerate(disease_columns)}
+            if use_reduced_gt:
+                self.logger.info("Using reduced ground truth")
+                # FIXME: This is a hardcoded list of diseases. It is used to ignore the irrelevant diseases
+                # Warning: This list should match with the one on prompt_builder.py
+                reduced_disease_list = [
+                    'atelectasis', 'pleural effusion', 'lung opacity', 'edema', 
+                    'cardiomegaly', 'pneumonia', 'consolidation', 'pneumothorax', 
+                    #'fracture', 'emphysema', 'pleural thickening', 'hernia',
+                ]
+                if use_xplainer_results:
+                    # Filter the reduced disease list to only include those present in xplainer results
+                    relevant_indices = [self.disease_to_index[disease] for disease in reduced_disease_list if disease in self.disease_to_index]
+                else:
+                    # Get the indices of the relevant diseases
+                    relevant_indices = [self.disease_to_index[disease] for disease in reduced_disease_list if disease in self.disease_to_index]
+                    # Create a new mapping for the relevant diseases
+                    self.disease_to_index = {disease: idx for idx, disease in enumerate(reduced_disease_list) if disease in self.disease_to_index}
 
             # Group rows by dicom_id so that images with multiple disease entries are combined.
             grouped = aux_df.groupby("dicom_id")
 
             auxiliary_dict = {}
-            for dicom_id, group in grouped:
-                # For the disease vector, simply take it from the first row.
-                disease_vector = np.array(group.iloc[0]['disease_vector'], dtype=np.float32)
-
+            # Wrap the for loop in tqdm to show progress
+            for dicom_id, group in tqdm(grouped, desc="Processing DICOM IDs", unit="dicom_id"):
+            #for dicom_id, group in grouped:
+                if use_xplainer_results:
+                    disease_vector = xp_predictions_df.at[dicom_id, 'disease_vector']
+                else:
+                    # For the disease vector, simply take it from the first row.
+                    disease_vector = np.array(group.iloc[0]['disease_vector'], dtype=np.float32)
+                if use_reduced_gt:
+                    # keep only the relevant diseases
+                    disease_vector = np.array([disease_vector[i] for i in relevant_indices], dtype=np.float32)
                 # Mask for getting the information from the reference image
                 ref_id_mask = group.iloc[0]["ref_id_mask"]
 
@@ -109,7 +149,7 @@ class PLURALInference:
                         disease_present = 0
                         continue
                     disease_label = row["disease"]
-                    if disease_label not in self.disease_to_index:
+                    if disease_label not in unique_diseases:
                         print(f"CaptionDataset init method: Non existing label {disease_label} " 
                               f"for auxiliary dataset {auxiliary_csv_path}")
                         continue  # Defensive check
@@ -127,6 +167,7 @@ class PLURALInference:
                 #      f"ref dicom: {ref_dicom_id}\nref mask: {ref_id_mask}")
 
             self.auxiliary_dict = auxiliary_dict
+            self.logger.info(f"Loaded auxiliary data from {auxiliary_csv_path} with {len(auxiliary_dict)} entries.")
     
     def log_memory_usage(self, tag=""):
         """Log memory usage of the current process."""
@@ -142,6 +183,7 @@ class PLURALInference:
             f"--bpe-dir={self.workspace}/PLURAL/utils/BPE",
             "--no-repeat-ngram-size=3", "--patch-image-size=384"
         ]
+        self.logger.info(f"Input args: {input_args}")
         tasks.register_task('refcoco', RefcocoTask)
         parser = options.get_generation_parser()
         args = options.parse_args_and_arch(parser, input_args)
@@ -499,8 +541,16 @@ def main():
         
         # checkpoint before specific dvqa
         checkpoint_file = "checkpoint_best.pt"
-        model_path = f"{plural_ws}/checkpoints/pretrain/6_0.06_200000_2025-03-23_06-42-00/{checkpoint_file}"
+        #model_path = f"{plural_ws}/checkpoints/pretrain/6_0.06_200000_2025-03-23_06-42-00/{checkpoint_file}"
         
+        # checkpoint first epoch reduced disease
+        #model_path = f"{plural_ws}/checkpoints/pretrain/6_0.06_200000_2025-04-28_16-05-55/{checkpoint_file}"
+        # Checkpoint 8 diseases decoder unfrozen
+        model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-05-25_20-27-44/{checkpoint_file}"
+        # Checkpoint 8 diseases encoder layers and decoder unfrozen trained with xplainer results
+        #model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-05-27_08-27-54/{checkpoint_file}"
+        # Checkpoint 8 diseases encoder layers and decoder unfrozen normal gt
+        #model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-05-26_22-23-02/{checkpoint_file}"
     
     else:
         logger.info("Running on ifl cluster...")
