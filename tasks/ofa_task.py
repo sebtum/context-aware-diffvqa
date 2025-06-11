@@ -177,17 +177,18 @@ class OFATask(FairseqTask):
             self.bpe = self.build_bpe(bpe_dict)
         # WARNING: Mover to the end of the method to allow bpe to be accessed by the model
         model = super().build_model(cfg)
-        freeze_main = False
+        freeze_main = True
         if freeze_main == True:
             # Freeze all parameters first
             for name, param in model.named_parameters():
                 param.requires_grad = False
         
-            # Then unfreeze the auxiliary network's weights
-            # Adjust the substring if necessary to match your module naming
-            keys_to_check = [] ###################################################### FIX ME: Choose which layers to unfreeze
+            # Unfreeze the decoder and encoder layers
+            #####################################################################################
+            ####### FIXME: This is a hack to unfreeze the decoder and encoder layers#############
+            #####################################################################################
             for name, param in model.named_parameters():
-                if any(key in name for key in keys_to_check):
+                if name.startswith("decoder") or name.startswith("encoder.layers"):
                     param.requires_grad = True
                     print(f"Unfreezing {name}")
         return model
