@@ -52,7 +52,7 @@ class PLURALInference:
     def __init__(self, workspace, test_data, model_path, 
                  inference_path, annotation_file, results_file, 
                  batch_size, num_workers, write_chunk_size, 
-                 use_reduced_gt=True, use_xplainer_results=False):
+                 use_reduced_gt=True, use_xplainer_results=True):
         self.logger = logging.getLogger(__name__)
         self.workspace = workspace
         self.test_data = test_data
@@ -75,9 +75,10 @@ class PLURALInference:
         self.logger.info(f"CSV field size limit set to: {csv.field_size_limit()}")
         auxiliary_csv_path = "/data/geraugi/plural/pre_processed_data/compact_context_w_ref_id.csv"
         if use_xplainer_results:
-            xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv"
+            # xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv"
+            xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-05-22_02-33-32/xplainer_maximized_precision_predictions.csv"
             self.logger.info(f"WARNING: Using xplainer results as ground truth for diseases: {xplainer_csv}")
-            xp_predictions_df = pd.read_csv(f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv")
+            xp_predictions_df = pd.read_csv(xplainer_csv)
             xp_predictions_df['disease_vector'] = xp_predictions_df[ 'disease_vector'].apply(ast.literal_eval)
             xp_predictions_df = xp_predictions_df.set_index('dicom_id')
         if auxiliary_csv_path is not None:
@@ -528,9 +529,10 @@ def main():
         repo_ws = f"{nas_path}/repos"
         plural_ws = f"{nas_path}/plural"
         inference_path = f"{plural_ws}/inference"
-        test_data_file = "mimic_diff_qa_s2_test.tsv"
+        #test_data_file = "mimic_diff_qa_s2_test.tsv"
+        test_data_file = "mimic_diff_qa_test.tsv"
         test_data = f"{plural_ws}/pre_processed_data/{test_data_file}"
-        #test_data = f"{plural_ws}/pre_processed_data/1000_samples/{test_data_file}" #FIXME
+        # test_data = f"{plural_ws}/pre_processed_data/1000_samples/{test_data_file}" #FIXME
         
         #checkpoint_file = "PLURAL.pt"
         #model_path = f"{plural_ws}/checkpoints/{checkpoint_file}"
@@ -546,11 +548,15 @@ def main():
         # checkpoint first epoch reduced disease
         #model_path = f"{plural_ws}/checkpoints/pretrain/6_0.06_200000_2025-04-28_16-05-55/{checkpoint_file}"
         # Checkpoint 8 diseases decoder unfrozen
-        model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-05-25_20-27-44/{checkpoint_file}"
+        #model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-05-25_20-27-44/{checkpoint_file}"
         # Checkpoint 8 diseases encoder layers and decoder unfrozen trained with xplainer results
         #model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-05-27_08-27-54/{checkpoint_file}"
         # Checkpoint 8 diseases encoder layers and decoder unfrozen normal gt
         #model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-05-26_22-23-02/{checkpoint_file}"
+        # Checkpoint 8 diseases encoder layers and decoder unfrozen trained on xplainer results with maximized precision
+        # model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-08-01_03-01-27/{checkpoint_file}"
+        # specific dvqa 8 diseases encoder layers and decoder unfrozen trained on xplainer results with maximized precision
+        model_path = f"{plural_ws}/checkpoints/pretrain/5_0.06_200000_2025-08-03_22-53-36/{checkpoint_file}"
     
     else:
         logger.info("Running on ifl cluster...")

@@ -1,5 +1,5 @@
 
-export MASTER_PORT=1062
+export MASTER_PORT=1063
 
 # Check if IN_SERAPH is set to 1
 if [ "$IN_SERAPH" -eq 1 ]; then
@@ -31,6 +31,7 @@ mkdir -p $log_dir $save_dir
 # data=${data_dir}/mimic_impressions_train.tsv,${data_dir}/mimic_impressions_valid.tsv
 # data=${data_dir}/mimic_findings_train.tsv,${data_dir}/mimic_findings_valid.tsv
 data=${data_dir}/mimic_diff_qa_s2_train.tsv,${data_dir}/mimic_diff_qa_s2_valid.tsv
+data=${data_dir}/mimic_diff_qa_train.tsv,${data_dir}/mimic_diff_qa_valid.tsv
 #diff_data=${data_dir}/mimic_uni_all_train.tsv,${data_dir}/mimic_uni_all_valid.tsv
 
 #restore_file=${checkpoints}/ofa_base.pt
@@ -44,7 +45,7 @@ task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.1
-lr=2.7e-4 #for 8 gpus
+lr=1.35e-4 #for 4 gpus
 #max_epoch=5 #modify below
 warmup_ratio=0.06
 batch_size=8
@@ -68,7 +69,7 @@ validate_interval_updates=170
 log_interval=40
 
 # FIXME: Check CUDA availability, master port
-for max_epoch in 6; do
+for max_epoch in 5; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in 0.06; do
     echo "warmup_ratio "${warmup_ratio}
@@ -78,7 +79,7 @@ for max_epoch in 6; do
       log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")".log"
       save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}"_"$(date +"%Y-%m-%d_%H-%M-%S")
       mkdir -p $save_path
-      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ${plural}/train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ${plural}/train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \

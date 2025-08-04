@@ -83,7 +83,7 @@ def collate(samples, pad_idx, eos_idx, aux=True):
     if aux:
         # FIXME: This information is just to save image embeddings
         net_input["dicom_ids"]= id
-        print(id)
+        #print(id)
         # Define the auxiliary keys for the main image.
         aux_keys = [
             "disease_tensor_gt",
@@ -171,7 +171,8 @@ class CaptionDataset(OFADataset):
             self.prompt = "图片描述了什么内容?"
 
         if use_xplainer_results:
-            xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv"
+            #xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-04-28_05-17-25/test_predictions_df.csv"
+            xplainer_csv = f"/data/geraugi/plural/dataset_files/xp_out/xplainer_inference_2025-05-22_02-33-32/xplainer_maximized_precision_predictions.csv"
             logger.info(f"WARNING: Using xplainer results as ground truth for diseases: {xplainer_csv}")
             xp_predictions_df = pd.read_csv(xplainer_csv)
             xp_predictions_df['disease_vector'] = xp_predictions_df[ 'disease_vector'].apply(ast.literal_eval)

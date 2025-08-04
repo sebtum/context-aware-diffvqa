@@ -9,7 +9,7 @@ OFA
 from typing import Optional
 
 import logging
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -87,10 +87,11 @@ class OFAModel(TransformerModel):
         ref_id_mask: Optional[torch.Tensor] = None,
         disease_present: Optional[torch.Tensor] = None,
         disease_present_2: Optional[torch.Tensor] = None,
+        dicom_ids: Optional[np.array] = None,
     ):
         if classification_head_name is not None:
             features_only = True
-
+        #print(f'dicom_ids in ofa model: {dicom_ids}')
         encoder_out = self.encoder(
             src_tokens,
             src_lengths=src_lengths,
@@ -102,6 +103,7 @@ class OFAModel(TransformerModel):
             sample_patch_num=sample_patch_num,
             disease_tensor_gt=disease_tensor_gt,
             disease_tensor_gt_2=disease_tensor_gt_2,
+            dicom_ids=dicom_ids,
         )
         x, extra = self.decoder(
             prev_output_tokens,

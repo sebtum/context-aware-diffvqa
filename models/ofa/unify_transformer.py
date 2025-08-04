@@ -7,6 +7,7 @@ import math
 import random
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -450,6 +451,19 @@ class TransformerModel(FairseqEncoderDecoderModel):
             encoder = fsdp_wrap(encoder, min_num_params=min_params_to_wrap)
             decoder = fsdp_wrap(decoder, min_num_params=min_params_to_wrap)
         
+        # Or if you just want the encoder:
+        frozen_enc = [(n, p) for n, p in encoder.named_parameters() if not p.requires_grad]
+
+        # Now filter to 2D tensors whose second dim == embed_dim:
+        for name, param in frozen_enc:
+            if param.dim() == 2 and param.size(1) == args.encoder_embed_dim:
+                print(f"Encoder Frozen embedding: {name} shape={tuple(param.size())}")
+        frozen_dec = [(n, p) for n, p in decoder.named_parameters() if not p.requires_grad]
+
+        # Now filter to 2D tensors whose second dim == embed_dim:
+        for name, param in frozen_dec:
+            if param.dim() == 2 and param.size(1) == args.decoder_embed_dim:
+                print(f"Decoder Frozen embedding: {name} shape={tuple(param.size())}")
         return cls(args, encoder, decoder)
 
     @classmethod
@@ -828,8 +842,10 @@ class TransformerEncoder(FairseqEncoder):
         token_embedding: Optional[torch.Tensor] = None,
         pos_embed: Optional[torch.Tensor] = None,
         image_pos_embed: Optional[torch.Tensor] = None,
-        image_pos_embed_2: Optional[torch.Tensor] = None
+        image_pos_embed_2: Optional[torch.Tensor] = None,
+        dicom_ids: Optional[np.array] = None,
     ):
+        #print(f"dicom_ids in forward embedding: {dicom_ids}")
         # embed tokens and positions
         if token_embedding is None:
             token_embedding = self.embed_tokens(src_tokens)
@@ -875,7 +891,8 @@ class TransformerEncoder(FairseqEncoder):
                 image_x_2 = self.quant_noise(image_x_2)
             x = torch.cat([image_x_2, x], dim=1)
             embed = torch.cat([image_embed_2, embed], dim=1)
-
+        # FIXME: ONLY FOR IMAGE EMBEDDING OUTPUT TO CONSOLE
+        #print(f"dicom_id: {dicom_ids}\nmain: {len(image_embed.tolist())}\nref: {len(image_embed_2.tolist())}")
         return x, embed
 
     def forward(
@@ -891,6 +908,7 @@ class TransformerEncoder(FairseqEncoder):
         sample_patch_num: Optional[int] = None,
         disease_tensor_gt: Optional[torch.Tensor] = None,
         disease_tensor_gt_2: Optional[torch.Tensor] = None,
+        dicom_ids: Optional[np.array] = None,
     ):
         """
         Args:
@@ -925,6 +943,7 @@ class TransformerEncoder(FairseqEncoder):
                                        sample_patch_num,
                                        disease_tensor_gt,
                                        disease_tensor_gt_2,
+                                       dicom_ids,
                                        )
 
     # TorchScript doesn't support super() method so that the scriptable Subclass
@@ -943,6 +962,7 @@ class TransformerEncoder(FairseqEncoder):
         sample_patch_num: Optional[int] = None,
         disease_tensor_gt: Optional[torch.Tensor] = None,
         disease_tensor_gt_2: Optional[torch.Tensor] = None,
+        dicom_ids: Optional[np.array] = None,
     ):
         """
         Args:
@@ -1023,7 +1043,7 @@ class TransformerEncoder(FairseqEncoder):
         pos_embed = self.embed_positions(utils.new_arange(src_tokens_w_context))
         x, encoder_embedding = self.forward_embedding(
             src_tokens_w_context, image_embed, image_embed_2, token_embeddings,
-            pos_embed, image_pos_embed, image_pos_embed_2
+            pos_embed, image_pos_embed, image_pos_embed_2, dicom_ids
         )
 
         # account for padding while computing the representation
