@@ -10,6 +10,8 @@ class PromptBuilder(nn.Module):
         # Pre-encode fixed tokens once (created on CPU initially)
         self.register_buffer('bos_tokens', torch.LongTensor([self.dictionary.bos()]))
         self.register_buffer('eos_tokens', torch.LongTensor([self.dictionary.eos()]))
+        print(f"bos token: {self.bos_tokens}, eos token: {self.eos_tokens}")
+        print(f"pad token: {self.dictionary.pad()}")
 
         # Pre-encode the vocabulary words:
         #self.disease_vocab = [
@@ -50,6 +52,7 @@ class PromptBuilder(nn.Module):
             B = 1
         prompt_tokens_list = []
         
+        context_mask_list = []
         #print(f'bos tokens: {self.bos_tokens}\neos tokens: {self.eos_tokens}')
         for i in range(B):
             # Compute the disease difference per sample.
@@ -89,29 +92,39 @@ class PromptBuilder(nn.Module):
             #if not additional_words and not missing_words:
             #    context_str = " there is no change in diseases"
             #else:
-            context_str = additional_context_str + missing_context_str
-            context_str += " the question is "
-            #print(f'context str number {i}: {context_str}')
-            # Encode the prompt context (only the context; the question is already encoded)
-            encoded_context = self.dictionary.encode_line(
-                line=self.task_bpe.encode(context_str),
-                add_if_not_exist=False,
-                append_eos=False
-            ).long().to(device)
-            # Prepend bos and append eos to the encoded prompt context
-            prompt_encoded = torch.cat([self.bos_tokens.to(device), encoded_context])
-            
-            # Get the already encoded question tokens (which already include eos)
-            question_encoded = src_tokens[i][src_tokens[i] != pad_idx]
-            # Concatenate the prompt tokens with the encoded question.
-            final_prompt = torch.cat([prompt_encoded, question_encoded[1:]])
+            if not additional_words and not missing_words:
+                context_mask_list.append(0)
+                final_prompt = src_tokens[i]
+            else:
+                context_str = additional_context_str + missing_context_str + " "
+                #context_str += " the question is "
+                #print(f'context str number {i}: {context_str}')
+                # Encode the prompt context (only the context; the question is already encoded)
+                encoded_context = self.dictionary.encode_line(
+                    line=self.task_bpe.encode(context_str),
+                    add_if_not_exist=False,
+                    append_eos=False
+                ).long().to(device)
+                # Prepend bos and append eos to the encoded prompt context
+                prompt_encoded = torch.cat([self.bos_tokens.to(device), encoded_context])
+                context_mask_list.append(prompt_encoded.shape[0])
+
+                # Get the already encoded question tokens (which already include eos)
+                question_encoded = src_tokens[i][src_tokens[i] != pad_idx]
+                # Concatenate the prompt tokens with the encoded question.
+                final_prompt = torch.cat([prompt_encoded, question_encoded[1:]])
             #print(f'encoded prompt number {i}:{final_prompt}')
             prompt_tokens_list.append(final_prompt)
         
         final_encoded = data_utils.collate_tokens(prompt_tokens_list, pad_idx)
+        # build a matrix of 0s with the same shape as final_encoded
+        context_mask = torch.zeros_like(final_encoded, dtype=torch.bool)
+        # Modify the first context_mask_list[i] elements of each row to 2 with vectorized operation
+        for i in range(B):
+            context_mask[i, :context_mask_list[i]] = True
         # Debug: print the decoded prompt for inspection.
-        #self.decode_full_prompt(final_encoded.detach())
-        return final_encoded
+        # self.decode_full_prompt(final_encoded.detach())
+        return final_encoded, context_mask
     
     def decode_full_prompt(self, final_encoded, escape_unk=False):
         """
@@ -131,6 +144,8 @@ class PromptBuilder(nn.Module):
         # Convert token IDs to a string using your dictionary.
         decoded_str = self.dictionary.string(
             token_ids,
+            bpe_symbol=None,          # don’t strip BPE markers
+            extra_symbols_to_ignore=[],  # override defaults so it keeps special tokens
             unk_string=("UNKNOWNTOKENINREF" if escape_unk else "UNKNOWNTOKENINHYP")
         )
         print(f"Raw decoded str in subwords:{decoded_str}")

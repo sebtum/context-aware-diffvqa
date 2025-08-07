@@ -591,7 +591,7 @@ class TransformerEncoder(FairseqEncoder):
             self.layernorm_embedding = None
 
         if getattr(args, "add_type_embedding", False):
-            self.type_embedding = Embedding(2, embed_dim, padding_idx=None)
+            self.type_embedding = Embedding(3, embed_dim, padding_idx=None)
         else:
             self.type_embedding = None
 
@@ -651,6 +651,8 @@ class TransformerEncoder(FairseqEncoder):
         else:
             self.patch_layernorm_embedding = None
 
+        max_context_positions = 32
+        self.embed_context_positions = Embedding( max_context_positions + 2, embed_dim)
         self.embed_positions = Embedding(
             args.max_source_positions + 2, embed_dim)
         self.embed_image_positions = Embedding(
@@ -689,7 +691,7 @@ class TransformerEncoder(FairseqEncoder):
             self.layer_norm = LayerNorm(embed_dim)
         else:
             self.layer_norm = None
-
+        
         token_bucket_size = args.token_bucket_size
         token_num_rel_dis = 2 * token_bucket_size - 1
         token_rp_bucket = make_token_bucket_position(token_bucket_size)
@@ -840,6 +842,7 @@ class TransformerEncoder(FairseqEncoder):
         image_embed: Optional[torch.Tensor] = None,
         image_embed_2: Optional[torch.Tensor] = None,
         token_embedding: Optional[torch.Tensor] = None,
+        context_mask: Optional[torch.Tensor] = None,
         pos_embed: Optional[torch.Tensor] = None,
         image_pos_embed: Optional[torch.Tensor] = None,
         image_pos_embed_2: Optional[torch.Tensor] = None,
@@ -847,13 +850,20 @@ class TransformerEncoder(FairseqEncoder):
     ):
         #print(f"dicom_ids in forward embedding: {dicom_ids}")
         # embed tokens and positions
-        if token_embedding is None:
-            token_embedding = self.embed_tokens(src_tokens)
+        # WARNING: when modifying the source tokens with context I am bypassing this check and recomputing embeddings
+        #if token_embedding is None:
+        token_embedding = self.embed_tokens(src_tokens)
         x = embed = self.embed_scale * token_embedding
         if self.entangle_position_embedding and pos_embed is not None:
             x += pos_embed
         if self.type_embedding is not None:
-            x += self.type_embedding(src_tokens.new_zeros(x.size()[:2]))
+            #x += self.type_embedding(src_tokens.new_zeros(x.size()[:2]))
+            type_ids = torch.where(
+                context_mask,                          # [B, L] bool
+                torch.full_like(context_mask, 2, dtype=torch.long),  # fill 2
+                torch.zeros_like(context_mask, dtype=torch.long)     # fill 0
+            )  # [B, L] long
+            x = x + self.type_embedding(type_ids)
         if self.layernorm_embedding is not None:
             x = self.layernorm_embedding(x)
         x = self.dropout_module(x)
@@ -1016,7 +1026,7 @@ class TransformerEncoder(FairseqEncoder):
                 
         #src_tokens_w_context = src_tokens
         if self.training ==True: 
-            src_tokens_w_context = self.prompt_builder.build_and_prepend_context(
+            src_tokens_w_context, context_mask = self.prompt_builder.build_and_prepend_context(
                 disease_tensor_gt, disease_tensor_gt_2,
                 src_tokens
             )
@@ -1024,11 +1034,10 @@ class TransformerEncoder(FairseqEncoder):
             # FIX ME: placeholder for the output from xplainer
             disease_guess = disease_tensor_gt
             disease_guess_2 = disease_tensor_gt_2
-            src_tokens_w_context = self.prompt_builder.build_and_prepend_context(
+            src_tokens_w_context, context_mask = self.prompt_builder.build_and_prepend_context(
                 disease_guess, disease_guess_2,
                 src_tokens
             )
-
 
         encoder_padding_mask = src_tokens_w_context.eq(self.padding_idx)
         if patch_images is not None:
@@ -1040,10 +1049,24 @@ class TransformerEncoder(FairseqEncoder):
         has_pads = (src_tokens_w_context.device.type ==
                     "xla" or encoder_padding_mask.any())
 
-        pos_embed = self.embed_positions(utils.new_arange(src_tokens_w_context))
+        B, L = src_tokens_w_context.size()
+        dev = src_tokens_w_context.device
+        context_lens = context_mask.sum(dim=1)           # shape [B]
+        global_pos = torch.arange(L, device=dev)       # [L]
+        global_pos = global_pos.unsqueeze(0).expand(B, L) # [B, L]
+        ctx_pos_ids = global_pos.clone()                  # [B, L]
+        q_pos_ids = global_pos - context_lens.unsqueeze(1)  # broadcast [B,1]→[B,L]
+        pos_ids = torch.where(context_mask, ctx_pos_ids, q_pos_ids)  # [B, L]
+        pos_ctx   = self.embed_context_positions(pos_ids)   # context table expects IDs 0…max_ctx-1
+        pos_quest = self.embed_positions(pos_ids)  # question table expects IDs 0…max_quest-1
+        pos_embed = torch.where(
+            context_mask.unsqueeze(-1),  # [B, L, 1]
+            pos_ctx,                      # use context-table embeddings
+            pos_quest                     # use question-table embeddings
+        )  # [B, L, D]
         x, encoder_embedding = self.forward_embedding(
             src_tokens_w_context, image_embed, image_embed_2, token_embeddings,
-            pos_embed, image_pos_embed, image_pos_embed_2, dicom_ids
+            context_mask, pos_embed, image_pos_embed, image_pos_embed_2, dicom_ids
         )
 
         # account for padding while computing the representation
