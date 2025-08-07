@@ -508,6 +508,17 @@ class Trainer(object):
                         ema_state_dict, strict=True, model_cfg=self.cfg.model
                     )
                 else:
+                    # 1) Extract the old 2×768 weight
+                    old = state["model"]["encoder.type_embedding.weight"]  # shape [2,768]
+
+                    # 2) Build a new 3×768 tensor
+                    new = torch.zeros(3, old.size(1), dtype=old.dtype)
+                    new[:2].copy_(old)  # copy the two rows
+                    # new[2] remains zero (or fill however you like)
+
+                    # 3) Put it back
+                    state["model"]["encoder.type_embedding.weight"] = new
+                    print(f"New type embedding: {new}")
                     self.model.load_state_dict(
                         state["model"], strict=True, model_cfg=self.cfg.model
                     )
