@@ -178,19 +178,43 @@ class OFATask(FairseqTask):
         # WARNING: Mover to the end of the method to allow bpe to be accessed by the model
         model = super().build_model(cfg)
         freeze_main = True
-        if freeze_main == True:
-            # Freeze all parameters first
-            for name, param in model.named_parameters():
-                param.requires_grad = False
-        
+        if freeze_main == True:        
             # Unfreeze the decoder and encoder layers
             #####################################################################################
             ####### FIXME: This is a hack to unfreeze the decoder and encoder layers#############
             #####################################################################################
+            encoder_prefixes = (
+                "encoder.type_embedding",
+                "encoder.layers",
+                "encoder.embed_positions",
+                "encoder.embed_context_positions",
+                "encoder.pos_ln",
+                "encoder.context_pos_ln",
+                "encoder.pos_q_linear",
+                "encoder.pos_k_linear",
+                "encoder.layer_norm",
+                "encoder.token_rel_pos_table_list",
+            )
+            # decoder params to skip
+            decoder_skip = (
+                "decoder.output_projection",
+                "decoder.embed_tokens",
+                "decoder.layernorm_embedding",
+            )
+
             for name, param in model.named_parameters():
-                if name.startswith("decoder") or name.startswith("encoder.layers"):
+                # unfreeze encoder submodules
+                if any(name.startswith(pref) for pref in encoder_prefixes):
                     param.requires_grad = True
-                    print(f"Unfreezing {name}")
+
+                # unfreeze decoder except the skip-list
+                elif name.startswith("decoder") and not any(name.startswith(skip) for skip in decoder_skip):
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+                # optional logging
+                if param.requires_grad:
+                    print("unfreeze", name)
         return model
 
     def build_generator(
