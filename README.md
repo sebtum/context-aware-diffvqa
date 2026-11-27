@@ -10,6 +10,8 @@
 M.Sc. thesis by Sebastian Sotela, Technical University of Munich (2025).
 **Built on [PLURAL](https://github.com/yjch00/PLURAL)** ([Cho et al., MIDL 2024](https://arxiv.org/abs/2402.08966)). The base model and much of this code are the PLURAL authors' work. [What I added](#what-i-engineered) is listed below.
 
+**My related repositories:** [Xplainer](https://github.com/sebtum/Xplainer) · [BioViL-T](https://github.com/sebtum/biovil-t) · [CheXFound](https://github.com/sebtum/CheXFound)
+
 ## TL;DR
 
 - **Problem:** given a current and a prior chest X-ray, answer "what has changed?". The baseline model gets only the two images and the question.
